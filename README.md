@@ -213,6 +213,32 @@ docker-compose up -d
 
 Default port: `4000`. MC dashboard: `http://<host>:4000/workspace/default`.
 
+### GitHub Integration
+
+Mission-Claw can automatically transition task status based on linked GitHub pull requests.
+
+1. Go to your repository: **Settings → Webhooks → Add webhook**
+2. Set **Payload URL** to: `https://your-mc-url/api/webhooks/github`
+3. Set **Content type** to: `application/json`
+4. Set a webhook secret and add it to `.env.local`:
+   - `GITHUB_WEBHOOK_SECRET=<your-secret>`
+5. Choose **Let me select individual events** and enable **Pull requests** only
+
+Notes:
+- `/api/webhooks/github` is exempt from `MC_API_TOKEN` bearer auth in middleware.
+- Security for this endpoint is enforced via GitHub HMAC (`X-Hub-Signature-256`) using `GITHUB_WEBHOOK_SECRET`.
+
+To link a PR to a Mission-Claw task, include this anywhere in the PR body (or title):
+
+```text
+mc-task: <uuid>
+```
+
+When linked:
+- PR opened/synchronized → task moves to `review`
+- PR merged → task moves to `done`
+- PR closed without merge → task moves to `inbox`
+
 ### PM2
 
 ```bash
@@ -234,6 +260,7 @@ pm2 save
 | `POST` | `/api/tasks/:id/dispatch` | Dispatch task to agent |
 | `GET` | `/api/events/stream` | SSE event stream |
 | `POST` | `/api/webhooks/agent-completion` | Agent completion webhook (called by OpenClaw) |
+| `POST` | `/api/webhooks/github` | GitHub pull request webhook for task status automation |
 | `GET` | `/api/openclaw/status` | OpenClaw connection status |
 | `GET` | `/api/openclaw/diagnostics` | Integration diagnostics log |
 

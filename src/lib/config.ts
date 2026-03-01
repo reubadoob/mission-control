@@ -182,6 +182,11 @@ export function getDiscordRelaySessionKey(): string | null {
   return `agent:main:discord:channel:${channelId}`;
 }
 
+export function getGitHubWebhookSecret(): string | null {
+  if (typeof window !== 'undefined') return null;
+  return process.env.GITHUB_WEBHOOK_SECRET ?? null;
+}
+
 export interface DiscordTaskCommandConfig {
   enabled: boolean;
   sessionKey: string | null;

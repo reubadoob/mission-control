@@ -4,6 +4,7 @@ import {
   buildDispatchPrompt,
   DISPATCH_PROMPT_LIMITS,
   estimateTokens,
+  REQUIRED_FINAL_OUTPUT_SECTION,
   truncateSection,
 } from './dispatch';
 
@@ -23,16 +24,21 @@ test('buildDispatchPrompt truncates each section by configured limits', () => {
     constraints: 'c'.repeat(DISPATCH_PROMPT_LIMITS.constraints + 10),
   });
 
-  const sectionTexts = prompt
-    .split(/## [A-Z ]+\n/)
-    .filter(Boolean)
-    .map(section => section.trim());
+  const extractSection = (regex: RegExp): string => {
+    const match = prompt.match(regex);
+    assert.ok(match, 'expected section not found');
+    return match[1] ?? '';
+  };
 
-  assert.equal(sectionTexts.length, 4);
-  assert.ok(sectionTexts[0].length <= DISPATCH_PROMPT_LIMITS.systemRole);
-  assert.ok(sectionTexts[1].length <= DISPATCH_PROMPT_LIMITS.businessContext);
-  assert.ok(sectionTexts[2].length <= DISPATCH_PROMPT_LIMITS.taskSpec);
-  assert.ok(sectionTexts[3].length <= DISPATCH_PROMPT_LIMITS.constraints);
+  const systemRole = extractSection(/## SYSTEM ROLE\n([\s\S]*?)\n\n## BUSINESS CONTEXT/);
+  const businessContext = extractSection(/## BUSINESS CONTEXT\n([\s\S]*?)\n\n## TASK SPEC/);
+  const taskSpec = extractSection(/## TASK SPEC\n([\s\S]*?)\n\n## CONSTRAINTS/);
+  const constraints = extractSection(/## CONSTRAINTS\n([\s\S]*?)\n\n## ⚠️ REQUIRED FINAL OUTPUT/);
+
+  assert.ok(systemRole.length <= DISPATCH_PROMPT_LIMITS.systemRole);
+  assert.ok(businessContext.length <= DISPATCH_PROMPT_LIMITS.businessContext);
+  assert.ok(taskSpec.length <= DISPATCH_PROMPT_LIMITS.taskSpec);
+  assert.ok(constraints.length <= DISPATCH_PROMPT_LIMITS.constraints);
 });
 
 test('buildDispatchPrompt composes ordered section headers', () => {
@@ -47,6 +53,17 @@ test('buildDispatchPrompt composes ordered section headers', () => {
     prompt,
     /## SYSTEM ROLE\nSystem\n\n## BUSINESS CONTEXT\nBusiness\n\n## TASK SPEC\nTask\n\n## CONSTRAINTS\nConstraints/
   );
+});
+
+test('buildDispatchPrompt always ends with required final output section', () => {
+  const prompt = buildDispatchPrompt({
+    systemRole: 'System role with extra spacing   ',
+    businessContext: `Business context ${'b'.repeat(5000)}`,
+    taskSpec: `Task spec ${'t'.repeat(5000)}`,
+    constraints: `Constraints ${'c'.repeat(5000)}`,
+  });
+
+  assert.equal(prompt.endsWith(REQUIRED_FINAL_OUTPUT_SECTION), true);
 });
 
 test('estimateTokens uses chars divided by four rounded up', () => {

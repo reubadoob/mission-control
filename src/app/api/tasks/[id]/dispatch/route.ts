@@ -6,12 +6,38 @@ import { getOpenClawClient } from '@/lib/openclaw/client';
 import { broadcast } from '@/lib/events';
 import { getProjectsPath, getMissionControlUrl } from '@/lib/config';
 import { fetchAgentContext } from '@/lib/context/agent-context';
-import { buildDispatchPrompt, estimateTokens } from '@/lib/prompts/dispatch';
+import {
+  buildDispatchPrompt,
+  estimateTokens,
+  REQUIRED_FINAL_OUTPUT_SECTION,
+} from '@/lib/prompts/dispatch';
 import { prepareWorktree, WORKTREE_BASE_BRANCH } from '@/lib/workspace';
 import type { Task, Agent, OpenClawSession } from '@/lib/types';
 
 interface RouteParams {
   params: Promise<{ id: string }>;
+}
+
+const MAX_DISPATCH_PROMPT_TOKENS = 4000;
+
+function enforceDispatchTokenBudget(prompt: string): string {
+  const requiredSuffix = `\n\n${REQUIRED_FINAL_OUTPUT_SECTION}`;
+
+  const basePrefix = prompt.endsWith(requiredSuffix)
+    ? prompt.slice(0, -requiredSuffix.length)
+    : prompt;
+  const fullPrompt = `${basePrefix.trimEnd()}${requiredSuffix}`;
+
+  if (estimateTokens(fullPrompt) <= MAX_DISPATCH_PROMPT_TOKENS) {
+    return fullPrompt;
+  }
+
+  const availableChars = (MAX_DISPATCH_PROMPT_TOKENS * 4) - requiredSuffix.length;
+  if (availableChars <= 0) {
+    return REQUIRED_FINAL_OUTPUT_SECTION;
+  }
+
+  return `${basePrefix.slice(0, availableChars).trimEnd()}${requiredSuffix}`;
 }
 
 /**
@@ -250,7 +276,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       'Completion signal format (required):',
       'TASK_COMPLETE: <brief summary>',
       'PROGRESS_UPDATE: <what changed> | next: <next step> | eta: <time>',
-      'BLOCKED: <what is blocked> | need: <specific input> | meanwhile: <fallback work>',
+      'BLOCKED: <reason> | need: <what you need to proceed> | meanwhile: <what the user can do while waiting>',
       '',
       'Worktree instructions:',
       '- Use the prepared worktree/branch when provided in business context.',
@@ -258,17 +284,17 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       '- Do not drift from task scope; do not start unrelated work.',
     ].join('\n');
 
-    const promptBody = buildDispatchPrompt({
+    const promptBody = enforceDispatchTokenBudget(buildDispatchPrompt({
       systemRole,
       businessContext: businessContextParts.join('\n'),
       taskSpec,
       constraints,
-    });
+    }));
 
-    const promptVersion = 'v1';
+    const promptVersion = 'v2';
     const promptChecksum = createHash('sha256').update(promptBody).digest('hex').slice(0, 12);
     const taskMessage = `<!-- dispatch-prompt:${promptVersion} checksum:${promptChecksum} -->\n${promptBody}`;
-    const estimatedTokens = estimateTokens(taskMessage);
+    const estimatedTokens = estimateTokens(promptBody);
 
     // Send message to agent's session using chat.send.
     // Start with a lightweight handshake so stale sessions get rehydrated before task dispatch.
@@ -332,6 +358,20 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           agent.id,
           'updated',
           `Dispatch prompt metadata: version=${promptVersion}, checksum=${promptChecksum}, estimated_tokens=${estimatedTokens}`,
+          now,
+        ]
+      );
+
+      const requiredSignalActivityId = randomUUID();
+      run(
+        `INSERT INTO task_activities (id, task_id, agent_id, activity_type, message, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          requiredSignalActivityId,
+          task.id,
+          agent.id,
+          'updated',
+          'Dispatch prompt sent with TASK_COMPLETE signal requirement (v2)',
           now,
         ]
       );

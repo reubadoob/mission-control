@@ -79,6 +79,13 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  const exemptTokenRoutes = new Set(['/api/webhooks/github']);
+
+  // GitHub webhook uses HMAC signature verification instead of bearer auth
+  if (exemptTokenRoutes.has(pathname)) {
+    return NextResponse.next();
+  }
+
   // If MC_API_TOKEN is not set, auth is disabled (dev mode)
   if (!MC_API_TOKEN) {
     return NextResponse.next();
