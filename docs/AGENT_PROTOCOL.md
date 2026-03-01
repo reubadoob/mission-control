@@ -236,3 +236,30 @@ Planned features:
 - Subtask breakdown
 - Time tracking
 - Quality metrics
+
+---
+
+## Dispatch Prompt Signals (Updated 2026-03-01)
+
+### Required Completion Signal
+Every agent dispatch prompt now ends with a mandatory block that cannot be truncated:
+
+```
+TASK_COMPLETE: <one sentence summary> | deliverables: <comma-separated PR URLs or file paths>
+```
+
+Leave `deliverables:` blank if there are nothing to report.
+
+### Blocked Signal (pipe-delimited)
+```
+BLOCKED: <reason> | need: <what you need to proceed> | meanwhile: <what the operator can do>
+```
+
+### Progress Signal
+```
+PROGRESS_UPDATE: <message>
+```
+
+### PR → Task Linking
+Include `mc-task: <uuid>` anywhere in a PR body or title to link it to a Mission-Claw task. The GitHub webhook will then automatically transition the task status based on PR events.
+

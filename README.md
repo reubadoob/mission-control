@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.2.0-blue?style=flat-square" alt="Version" />
+  <img src="https://img.shields.io/badge/version-2.0.0-blue?style=flat-square" alt="Version" />
   <img src="https://img.shields.io/badge/Next.js-14-black?style=flat-square&logo=next.js" alt="Next.js" />
   <img src="https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
   <img src="https://img.shields.io/badge/SQLite-3-003B57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite" />
@@ -121,13 +121,18 @@ This architecture is built for professional velocity, not free tiers.
 - File preview and upload
 
 ### Mission-Claw Extensions
-- **Discord command ingestion** — Create MC tasks from Discord with `!task`
+- **Discord command ingestion** — Create MC tasks from Discord with `!task <title> | <desc> | agent:<name> | priority:<level>`
+- **Discord thread-per-task** — Each task gets its own Discord thread; relay events route to the correct thread automatically
 - **Discord relay** — Task events (created, updated, completed, activities, deliverables) relayed back to Discord
-- **OpenClaw session bridge** — Agents maintain persistent sessions across tasks; session state tracked in DB
-- **Completion signal parsing** — `TASK_COMPLETE:`, `PROGRESS_UPDATE:`, `BLOCKED:` parsed automatically from agent output
+- **OpenClaw session bridge** — Agents maintain persistent sessions; live session transcript visible in the UI (Session Console)
+- **Completion signal parsing** — `TASK_COMPLETE:`, `PROGRESS_UPDATE:`, `BLOCKED: <reason> | need: <...> | meanwhile: <...>` parsed automatically
+- **Mandatory TASK_COMPLETE signal** — Every agent dispatch prompt ends with a required completion block; agents cannot silently finish
+- **Context injection** — Live GearSwitchr business context (user counts, listings, schema) injected into every dispatch prompt via internal API
+- **Structured prompt templates** — Token-budgeted dispatch prompts with stable template checksums, metadata column logging, description truncation protection
+- **Git worktree isolation** — Each task gets a dedicated `git worktree` at `os.tmpdir()/mc-task-<id>`; agents never contaminate each other
+- **GitHub PR webhook** — PRs auto-move linked tasks: opened→review, merged→done, closed→inbox (link via `mc-task: <uuid>` in PR body)
 - **Auto-dispatch** — Tasks assigned to agents trigger immediate dispatch without manual intervention
-- **Diagnostics layer** — All OpenClaw ↔ MC handoffs are logged for debugging (`/api/openclaw/diagnostics`)
-- **Bootstrap** — One-shot agent session initialization from MC UI
+- **Diagnostics layer** — All OpenClaw ↔ MC handoffs logged for debugging
 
 ---
 
@@ -159,6 +164,18 @@ This architecture is built for professional velocity, not free tiers.
 
 Commands are deduped and allowlist-protected. Rate limits apply per user, but IDs in `OPENCLAW_DISCORD_TASK_OWNER_IDS` bypass only the min-interval throttle.
 
+## Agent Dispatch Signals
+
+Every agent receives a structured prompt with a mandatory final output requirement.
+
+| Signal | Format | Effect |
+|---|---|---|
+| Completion | `TASK_COMPLETE: <summary> \| deliverables: <url-or-path>` | Task moves to `review`; deliverables ingested |
+| Blocked | `BLOCKED: <reason> \| need: <what> \| meanwhile: <what>` | Task flagged; operator notified |
+| Progress | `PROGRESS_UPDATE: <message>` | Activity logged; no status change |
+
+The `TASK_COMPLETE:` line is **required** — it is enforced in the dispatch prompt template and cannot be truncated. Agents that finish without emitting it will leave the task in `in_progress` indefinitely.
+
 ---
 
 ## Setup
@@ -172,25 +189,40 @@ Commands are deduped and allowlist-protected. Rate limits apply per user, but ID
 
 ```env
 # OpenClaw connection
-OPENCLAW_GATEWAY_URL=http://localhost:3001
-OPENCLAW_API_KEY=your-api-key
-INTERNAL_CONTEXT_API_KEY=your-internal-context-api-key
+OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789
+OPENCLAW_GATEWAY_TOKEN=your-gateway-token
 
-# Discord relay — the OpenClaw session key for the Discord channel
-DISCORD_RELAY_SESSION_KEY=agent:main:discord:channel:<channel-id>
+# Discord relay
+OPENCLAW_DISCORD_RELAY_ENABLED=true
+OPENCLAW_DISCORD_CHANNEL_ID=your-channel-id
 
 # Discord task command ingestion
 OPENCLAW_DISCORD_TASK_COMMANDS_ENABLED=true
-OPENCLAW_DISCORD_TASK_COMMAND_USER_ALLOWLIST=user-id-1,user-id-2
-OPENCLAW_DISCORD_TASK_OWNER_IDS=discord-owner-id-1,discord-owner-id-2
+OPENCLAW_DISCORD_TASK_COMMAND_USER_ALLOWLIST=discord-user-id-1,discord-user-id-2
+OPENCLAW_DISCORD_TASK_OWNER_IDS=discord-owner-id-1  # bypasses rate limits
+DISCORD_TASK_DM_ENABLED=false
+DISCORD_TASK_DM_AUDIT_CHANNEL=
 
-# File paths
-PROJECTS_PATH=~/projects
-NEXT_PUBLIC_PROJECTS_PATH=~/projects
+# GearSwitchr internal context API (injected into agent prompts)
+INTERNAL_CONTEXT_API_KEY=your-internal-key
 
-# App
-NODE_ENV=production
-PORT=4000
+# Git worktree isolation
+GIT_REPO_ROOT=/path/to/your/git/repo
+WORKTREE_BASE_BRANCH=main
+
+# GitHub webhook (auto task status from PRs)
+GITHUB_WEBHOOK_SECRET=generate-with-openssl-rand-hex-32
+
+# Database
+DATABASE_PATH=./mission-control.db
+
+# Workspace
+WORKSPACE_BASE_PATH=~/Documents/Shared
+PROJECTS_PATH=~/Documents/Shared/projects
+
+# Security (leave blank for local dev)
+MC_API_TOKEN=
+WEBHOOK_SECRET=
 ```
 
 ### Local Development
