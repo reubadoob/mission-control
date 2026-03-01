@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback, useEffect } from 'react';
-import { X, Save, Trash2, Activity, Package, Bot, ClipboardList, Plus, FolderGit2 } from 'lucide-react';
+import { X, Save, Trash2, Activity, Package, Bot, ClipboardList, FolderGit2, Check, XCircle } from 'lucide-react';
 import { useMissionControl } from '@/lib/store';
 import { triggerAutoDispatch, shouldTriggerAutoDispatch } from '@/lib/auto-dispatch';
 import { ActivityLog } from './ActivityLog';
@@ -29,6 +29,7 @@ interface TaskModalProps {
 export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
   const { agents, addTask, updateTask, addEvent } = useMissionControl();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isReviewSubmitting, setIsReviewSubmitting] = useState(false);
   const [showAgentModal, setShowAgentModal] = useState(false);
   const [usePlanningMode, setUsePlanningMode] = useState(false);
   // Auto-switch to planning tab if task is in planning status
@@ -198,6 +199,38 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
       }
     } catch (error) {
       console.error('Failed to delete task:', error);
+    }
+  };
+
+  const handleReviewAction = async (action: 'approve' | 'reject') => {
+    if (!task) return;
+
+    const reason = action === 'reject'
+      ? (window.prompt('Optional rejection reason:') || '').trim()
+      : undefined;
+
+    setIsReviewSubmitting(true);
+
+    try {
+      const res = await fetch(`/api/tasks/${task.id}/review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, reason }),
+      });
+
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}));
+        console.error('Failed to process review action:', error);
+        return;
+      }
+
+      const updatedTask = await res.json();
+      updateTask(updatedTask);
+      setForm((prev) => ({ ...prev, status: updatedTask.status }));
+    } catch (error) {
+      console.error('Failed to process review action:', error);
+    } finally {
+      setIsReviewSubmitting(false);
     }
   };
 
@@ -470,6 +503,30 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
               >
                 Cancel
               </button>
+
+              {task && form.status === 'review' && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => handleReviewAction('reject')}
+                    disabled={isReviewSubmitting}
+                    className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded text-sm font-medium hover:bg-red-700 disabled:opacity-50"
+                  >
+                    <XCircle className="w-4 h-4" />
+                    {isReviewSubmitting ? 'Submitting...' : 'Reject'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleReviewAction('approve')}
+                    disabled={isReviewSubmitting}
+                    className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded text-sm font-medium hover:bg-green-700 disabled:opacity-50"
+                  >
+                    <Check className="w-4 h-4" />
+                    {isReviewSubmitting ? 'Submitting...' : 'Approve'}
+                  </button>
+                </>
+              )}
+
               <button
                 onClick={handleSubmit}
                 disabled={isSubmitting}

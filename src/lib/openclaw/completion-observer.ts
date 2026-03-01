@@ -4,6 +4,7 @@ import { queryOne, run } from '@/lib/db';
 import { broadcast } from '@/lib/events';
 import { logOpenClawDiagnostic } from '@/lib/openclaw/diagnostics';
 import { parseDeliverables } from '@/lib/openclaw/parse-deliverables';
+import { enqueueWebhook, processWebhookQueue } from '@/lib/webhook-queue';
 import type { OpenClawSession, Task } from '@/lib/types';
 
 const observedClients = new WeakSet<OpenClawClient>();
@@ -127,56 +128,37 @@ async function forwardCompletionToWebhook(sessionId: string, message: string): P
   }
   recentlyProcessed.set(key, now);
 
-  try {
-    logOpenClawDiagnostic({
-      kind: 'completion_forward',
-      status: 'attempt',
-      message: 'Forwarding TASK_COMPLETE to webhook',
-      metadata: { session_id: sessionId, message, webhook_url: `${missionControlUrl}/api/webhooks/agent-completion` },
-    });
+  const webhookUrl = `${missionControlUrl}/api/webhooks/agent-completion`;
 
-    const response = await fetch(`${missionControlUrl}/api/webhooks/agent-completion`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        session_id: sessionId,
-        message,
-      }),
-    });
+  const jobId = enqueueWebhook({
+    url: webhookUrl,
+    body: {
+      session_id: sessionId,
+      message,
+    },
+    maxAttempts: 3,
+  });
 
-    if (!response.ok) {
-      const body = await response.text();
-      logOpenClawDiagnostic({
-        kind: 'completion_forward',
-        status: 'failure',
-        message: 'Completion webhook returned non-2xx',
-        metadata: {
-          session_id: sessionId,
-          status_code: response.status,
-          response_body: body.slice(0, 1000),
-        },
-      });
-      return;
-    }
+  logOpenClawDiagnostic({
+    kind: 'completion_forward',
+    status: 'attempt',
+    message: 'Queued TASK_COMPLETE webhook for retryable delivery',
+    metadata: { session_id: sessionId, message, webhook_url: webhookUrl, job_id: jobId },
+  });
 
-    logOpenClawDiagnostic({
-      kind: 'completion_forward',
-      status: 'success',
-      message: 'Completion webhook accepted',
-      metadata: { session_id: sessionId },
-    });
-  } catch (error) {
-    console.error('[OpenClaw][CompletionObserver] Failed to forward completion webhook:', error);
+  void processWebhookQueue().catch((error) => {
+    console.error('[OpenClaw][CompletionObserver] Failed to process webhook queue:', error);
     logOpenClawDiagnostic({
       kind: 'completion_forward',
       status: 'failure',
-      message: 'Completion webhook request failed',
+      message: 'Queued completion webhook processing failed',
       metadata: {
         session_id: sessionId,
+        job_id: jobId,
         error: error instanceof Error ? error.message : String(error),
       },
     });
-  }
+  });
 }
 
 function findActiveTaskForSession(sessionId: string): { session: OpenClawSession; task: Task } | null {

@@ -60,6 +60,12 @@ CREATE TABLE IF NOT EXISTS tasks (
   planning_agents TEXT,
   planning_dispatch_error TEXT,
   discord_thread_id TEXT,
+  review_approved_by TEXT DEFAULT NULL,
+  review_approved_at TEXT DEFAULT NULL,
+  review_rejected_reason TEXT DEFAULT NULL,
+  estimated_tokens INTEGER DEFAULT NULL,
+  model_used TEXT DEFAULT NULL,
+  prompt_version TEXT DEFAULT NULL,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
@@ -161,6 +167,18 @@ CREATE TABLE IF NOT EXISTS task_activities (
   created_at TEXT DEFAULT (datetime('now'))
 );
 
+-- Cost tracking per task dispatch
+CREATE TABLE IF NOT EXISTS task_costs (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  agent_id TEXT,
+  model TEXT NOT NULL,
+  estimated_tokens INTEGER NOT NULL,
+  estimated_cost_usd REAL,
+  dispatch_at TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Task deliverables table (files, URLs, artifacts)
 CREATE TABLE IF NOT EXISTS task_deliverables (
   id TEXT PRIMARY KEY,
@@ -187,4 +205,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_openclaw_sessions_unique_active
 ON openclaw_sessions(openclaw_session_id)
 WHERE status = 'active';
 CREATE INDEX IF NOT EXISTS idx_planning_questions_task ON planning_questions(task_id, sort_order);
+CREATE INDEX IF NOT EXISTS idx_task_costs_task_id ON task_costs(task_id);
+CREATE INDEX IF NOT EXISTS idx_task_costs_created_at ON task_costs(created_at);
 `;

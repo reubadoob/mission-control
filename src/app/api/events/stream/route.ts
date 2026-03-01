@@ -5,10 +5,25 @@
 
 import { NextRequest } from 'next/server';
 import { registerClient, unregisterClient } from '@/lib/events';
+import { processWebhookQueue } from '@/lib/webhook-queue';
+
+let webhookProcessorStarted = false;
+
+function startWebhookProcessorLoop(): void {
+  if (webhookProcessorStarted) return;
+  webhookProcessorStarted = true;
+
+  setInterval(() => {
+    void processWebhookQueue().catch((error) => {
+      console.error('[SSE] Webhook queue processor failed:', error);
+    });
+  }, 30_000);
+}
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
+  startWebhookProcessorLoop();
   const encoder = new TextEncoder();
 
   // Create a readable stream for SSE

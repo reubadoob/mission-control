@@ -8,6 +8,7 @@ import { Header } from '@/components/Header';
 import { AgentsSidebar } from '@/components/AgentsSidebar';
 import { MissionQueue } from '@/components/MissionQueue';
 import { LiveFeed } from '@/components/LiveFeed';
+import { CostPanel } from '@/components/CostPanel';
 import { SSEDebugPanel } from '@/components/SSEDebugPanel';
 import { useMissionControl } from '@/lib/store';
 import { useSSE } from '@/hooks/useSSE';
@@ -210,6 +211,9 @@ export default function WorkspacePage() {
 
         {/* Main Content Area */}
         <MissionQueue workspaceId={workspace.id} />
+
+        {/* Cost Panel */}
+        <CostPanel />
 
         {/* Live Feed */}
         <LiveFeed />

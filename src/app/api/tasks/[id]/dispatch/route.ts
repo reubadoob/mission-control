@@ -11,6 +11,7 @@ import {
   estimateTokens,
   REQUIRED_FINAL_OUTPUT_SECTION,
 } from '@/lib/prompts/dispatch';
+import { estimateCostUsd } from '@/lib/costs';
 import { prepareWorktree, WORKTREE_BASE_BRANCH } from '@/lib/workspace';
 import type { Task, Agent, OpenClawSession } from '@/lib/types';
 
@@ -348,6 +349,21 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         [activityId, task.id, agent.id, 'status_changed', `Task dispatched to ${agent.name} - Agent is now working on this task`, now]
       );
 
+      const agentModel = agent.model || 'anthropic/claude-sonnet-4-6';
+      const costUsd = estimateCostUsd(estimatedTokens, agentModel);
+      const costId = randomUUID();
+
+      run(
+        `INSERT INTO task_costs (id, task_id, agent_id, model, estimated_tokens, estimated_cost_usd, dispatch_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [costId, task.id, agent.id, agentModel, estimatedTokens, costUsd, now, now]
+      );
+
+      run(
+        'UPDATE tasks SET estimated_tokens = ?, model_used = ?, prompt_version = ?, updated_at = ? WHERE id = ?',
+        [estimatedTokens, agentModel, promptVersion, now, task.id]
+      );
+
       const tokenActivityId = randomUUID();
       run(
         `INSERT INTO task_activities (id, task_id, agent_id, activity_type, message, created_at)
@@ -357,7 +373,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           task.id,
           agent.id,
           'updated',
-          `Dispatch prompt metadata: version=${promptVersion}, checksum=${promptChecksum}, estimated_tokens=${estimatedTokens}`,
+          `Dispatch prompt metadata: version=${promptVersion}, checksum=${promptChecksum}, estimated_tokens=${estimatedTokens}, model=${agentModel}, estimated_cost_usd=${costUsd}`,
           now,
         ]
       );

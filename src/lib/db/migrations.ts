@@ -278,6 +278,99 @@ const migrations: Migration[] = [
         console.log('[Migration 009] Added discord_thread_id to tasks');
       }
     }
+  },
+  {
+    id: '010',
+    name: 'add_task_cost_tracking',
+    up: (db) => {
+      console.log('[Migration 010] Adding token/cost tracking columns and table...');
+
+      const tasksInfo = db.prepare("PRAGMA table_info(tasks)").all() as { name: string }[];
+
+      if (!tasksInfo.some(col => col.name === 'estimated_tokens')) {
+        db.exec(`ALTER TABLE tasks ADD COLUMN estimated_tokens INTEGER DEFAULT NULL`);
+        console.log('[Migration 010] Added estimated_tokens to tasks');
+      }
+
+      if (!tasksInfo.some(col => col.name === 'model_used')) {
+        db.exec(`ALTER TABLE tasks ADD COLUMN model_used TEXT DEFAULT NULL`);
+        console.log('[Migration 010] Added model_used to tasks');
+      }
+
+      if (!tasksInfo.some(col => col.name === 'prompt_version')) {
+        db.exec(`ALTER TABLE tasks ADD COLUMN prompt_version TEXT DEFAULT NULL`);
+        console.log('[Migration 010] Added prompt_version to tasks');
+      }
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS task_costs (
+          id TEXT PRIMARY KEY,
+          task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+          agent_id TEXT,
+          model TEXT NOT NULL,
+          estimated_tokens INTEGER NOT NULL,
+          estimated_cost_usd REAL,
+          dispatch_at TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_task_costs_task_id ON task_costs(task_id)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_task_costs_created_at ON task_costs(created_at)`);
+
+      console.log('[Migration 010] task_costs table and indexes ready');
+    }
+  },
+  {
+    id: '011',
+    name: 'add_review_gate_columns',
+    up: (db) => {
+      console.log('[Migration 011] Adding review gate columns to tasks...');
+
+      const tasksInfo = db.prepare("PRAGMA table_info(tasks)").all() as { name: string }[];
+
+      if (!tasksInfo.some(col => col.name === 'review_approved_by')) {
+        db.exec(`ALTER TABLE tasks ADD COLUMN review_approved_by TEXT DEFAULT NULL`);
+        console.log('[Migration 011] Added review_approved_by to tasks');
+      }
+
+      if (!tasksInfo.some(col => col.name === 'review_approved_at')) {
+        db.exec(`ALTER TABLE tasks ADD COLUMN review_approved_at TEXT DEFAULT NULL`);
+        console.log('[Migration 011] Added review_approved_at to tasks');
+      }
+
+      if (!tasksInfo.some(col => col.name === 'review_rejected_reason')) {
+        db.exec(`ALTER TABLE tasks ADD COLUMN review_rejected_reason TEXT DEFAULT NULL`);
+        console.log('[Migration 011] Added review_rejected_reason to tasks');
+      }
+    }
+  },
+  {
+    id: '012',
+    name: 'add_webhook_queue',
+    up: (db) => {
+      console.log('[Migration 012] Adding webhook_queue table...');
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS webhook_queue (
+          id TEXT PRIMARY KEY,
+          url TEXT NOT NULL,
+          method TEXT NOT NULL DEFAULT 'POST',
+          headers TEXT,
+          body TEXT,
+          status TEXT NOT NULL DEFAULT 'pending',
+          attempts INTEGER NOT NULL DEFAULT 0,
+          max_attempts INTEGER NOT NULL DEFAULT 3,
+          next_attempt_at TEXT NOT NULL DEFAULT (datetime('now')),
+          last_error TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_webhook_queue_status ON webhook_queue(status)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_webhook_queue_next_attempt ON webhook_queue(next_attempt_at)`);
+    }
   }
 ];
 

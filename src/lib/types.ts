@@ -65,6 +65,12 @@ export interface Task {
   business_id: string;
   due_date?: string;
   discord_thread_id?: string | null;
+  review_approved_by?: string | null;
+  review_approved_at?: string | null;
+  review_rejected_reason?: string | null;
+  estimated_tokens?: number | null;
+  model_used?: string | null;
+  prompt_version?: string | null;
   created_at: string;
   updated_at: string;
   // Joined fields

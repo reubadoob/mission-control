@@ -63,21 +63,15 @@ export async function PATCH(
     const values: unknown[] = [];
     const now = new Date().toISOString();
 
-    // Workflow enforcement for agent-initiated approvals
-    // If an agent is trying to move review→done, they must be a master agent
-    // User-initiated moves (no agent ID) are allowed
-    if (validatedData.status === 'done' && existing.status === 'review' && validatedData.updated_by_agent_id) {
-      const updatingAgent = queryOne<Agent>(
-        'SELECT is_master FROM agents WHERE id = ?',
-        [validatedData.updated_by_agent_id]
-      );
+    const isGithubWebhookBypass = request.headers.get('x-webhook-source') === 'github';
 
-      if (!updatingAgent || !updatingAgent.is_master) {
-        return NextResponse.json(
-          { error: 'Forbidden: only the master agent can approve tasks' },
-          { status: 403 }
-        );
-      }
+    // Review gate: review -> done must go through POST /api/tasks/:id/review
+    // Exception: GitHub webhook bypass is allowed.
+    if (validatedData.status === 'done' && existing.status === 'review' && !isGithubWebhookBypass) {
+      return NextResponse.json(
+        { error: 'Tasks in review must be approved via POST /api/tasks/:id/review' },
+        { status: 422 }
+      );
     }
 
     if (validatedData.title !== undefined) {
