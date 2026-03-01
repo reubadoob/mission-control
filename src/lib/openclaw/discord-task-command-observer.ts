@@ -113,10 +113,10 @@ function parseTaskCommand(commandText: string, commandPrefix: string): { title: 
   const rawTitle = segments[0]?.trim() ?? '';
   const rawDescription = segments[1]?.trim() ?? '';
   const rawOptions = segments.slice(2).join('|').trim();
-  if (!rawTitle || !rawDescription) return null;
+  if (!rawTitle) return null;
 
   const title = rawTitle.replace(/\s+/g, ' ').trim();
-  const description = rawDescription.trim();
+  const description = rawDescription.trim() || title; // fall back to title as description if omitted
   if (title.length < MIN_TITLE_LENGTH || title.length > MAX_TITLE_LENGTH) return null;
   if (description.length < MIN_DESCRIPTION_LENGTH || description.length > MAX_DESCRIPTION_LENGTH) return null;
 
@@ -314,7 +314,13 @@ export function attachDiscordTaskCommandObserver(client: OpenClawClient): void {
       const parsed = parseTaskCommand(commandText, config.commandPrefix);
       if (!parsed) {
         logAudit('rejected', 'Invalid command format', { session_key: sessionKey, sender_id: senderId, command: commandText });
-        return void sendAck(client, sessionKey, `⚠️ Invalid format. Use: ${config.commandPrefix} <title> | <description> | agent:<name> | priority:<low|normal|high|urgent>`, fingerprint);
+        return void sendAck(client, sessionKey, [
+          `⚠️ Couldn't parse that task. Try:`,
+          `\`${config.commandPrefix} <title>\` — quick task, no frills`,
+          `\`${config.commandPrefix} <title> | <description>\` — with detail`,
+          `\`${config.commandPrefix} <title> | <desc> | agent:Developer | priority:high\` — full syntax`,
+          `Priority options: low, normal, high, urgent`,
+        ].join('\n'), fingerprint);
       }
 
       if (parsed.targetAgentName) {
