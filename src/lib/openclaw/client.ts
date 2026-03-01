@@ -456,8 +456,18 @@ export class OpenClawClient extends EventEmitter {
     return this.call<OpenClawSessionInfo[]>('sessions.list');
   }
 
-  async getSessionHistory(sessionId: string): Promise<unknown[]> {
-    return this.call<unknown[]>('sessions.history', { session_id: sessionId });
+  async getSessionHistory(sessionId: string, limit?: number, offset?: number): Promise<unknown[]> {
+    const params: Record<string, unknown> = { session_id: sessionId };
+
+    if (typeof limit === 'number') {
+      params.limit = limit;
+    }
+
+    if (typeof offset === 'number') {
+      params.offset = offset;
+    }
+
+    return this.call<unknown[]>('sessions.history', params);
   }
 
   async sendMessage(sessionId: string, content: string): Promise<void> {

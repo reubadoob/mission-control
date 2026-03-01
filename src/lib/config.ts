@@ -185,12 +185,15 @@ export function getDiscordRelaySessionKey(): string | null {
 export interface DiscordTaskCommandConfig {
   enabled: boolean;
   sessionKey: string | null;
+  dmEnabled: boolean;
+  dmAuditSessionKey: string | null;
   commandPrefix: string;
   workspaceId: string;
   defaultPriority: 'low' | 'normal' | 'high' | 'urgent';
   maxOpenTasks: number;
   minIntervalMs: number;
   allowedUserIds: Set<string>;
+  ownerUserIds: Set<string>;
 }
 
 /**
@@ -202,12 +205,15 @@ export function getDiscordTaskCommandConfig(): DiscordTaskCommandConfig {
     return {
       enabled: false,
       sessionKey: null,
+      dmEnabled: false,
+      dmAuditSessionKey: null,
       commandPrefix: DEFAULT_DISCORD_TASK_COMMAND_PREFIX,
       workspaceId: 'default',
       defaultPriority: 'normal',
       maxOpenTasks: 200,
       minIntervalMs: 5000,
       allowedUserIds: new Set<string>(),
+      ownerUserIds: new Set<string>(),
     };
   }
 
@@ -215,6 +221,8 @@ export function getDiscordTaskCommandConfig(): DiscordTaskCommandConfig {
   const enabled = (process.env.OPENCLAW_DISCORD_TASK_COMMANDS_ENABLED || 'false').toLowerCase() === 'true';
   const commandPrefix = (process.env.OPENCLAW_DISCORD_TASK_COMMAND_PREFIX || DEFAULT_DISCORD_TASK_COMMAND_PREFIX).trim() || DEFAULT_DISCORD_TASK_COMMAND_PREFIX;
   const workspaceId = (process.env.OPENCLAW_DISCORD_TASK_WORKSPACE_ID || 'default').trim() || 'default';
+  const dmEnabled = (process.env.DISCORD_TASK_DM_ENABLED || 'false').toLowerCase() === 'true';
+  const dmAuditChannelId = (process.env.DISCORD_TASK_DM_AUDIT_CHANNEL || '').trim();
   const configuredPriority = (process.env.OPENCLAW_DISCORD_TASK_DEFAULT_PRIORITY || 'normal').trim().toLowerCase();
   const defaultPriority = (['low', 'normal', 'high', 'urgent'] as const).includes(configuredPriority as 'low' | 'normal' | 'high' | 'urgent')
     ? (configuredPriority as 'low' | 'normal' | 'high' | 'urgent')
@@ -228,15 +236,25 @@ export function getDiscordTaskCommandConfig(): DiscordTaskCommandConfig {
       .map((v) => v.trim())
       .filter(Boolean),
   );
+  const ownerIdsRaw = process.env.OPENCLAW_DISCORD_TASK_OWNER_IDS || '';
+  const ownerUserIds = new Set(
+    ownerIdsRaw
+      .split(',')
+      .map((v) => v.trim())
+      .filter(Boolean),
+  );
 
   return {
     enabled,
     sessionKey,
+    dmEnabled,
+    dmAuditSessionKey: dmAuditChannelId ? `agent:main:discord:channel:${dmAuditChannelId}` : null,
     commandPrefix,
     workspaceId,
     defaultPriority,
     maxOpenTasks: Number.isFinite(maxOpenTasks) && maxOpenTasks > 0 ? maxOpenTasks : 200,
     minIntervalMs: Number.isFinite(minIntervalMs) && minIntervalMs >= 0 ? minIntervalMs : 5000,
     allowedUserIds,
+    ownerUserIds,
   };
 }

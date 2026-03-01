@@ -1,4 +1,5 @@
 import type { SSEEvent } from '@/lib/types';
+import { queryOne } from '@/lib/db';
 import { getOpenClawClient } from '@/lib/openclaw/client';
 import { getDiscordRelaySessionKey } from '@/lib/config';
 import { logOpenClawDiagnostic } from '@/lib/openclaw/diagnostics';
@@ -48,9 +49,43 @@ function summarizeEvent(event: SSEEvent): string | null {
   return null;
 }
 
+function extractTaskIdForRouting(event: SSEEvent): string | null {
+  if (event.type === 'task_updated' || event.type === 'task_completed') {
+    const payload = event.payload as { id?: string };
+    return payload.id || null;
+  }
+
+  if (event.type === 'activity_logged' || event.type === 'deliverable_added') {
+    const payload = event.payload as { task_id?: string };
+    return payload.task_id || null;
+  }
+
+  return null;
+}
+
+function getDiscordThreadSessionKey(taskId: string): string | null {
+  const row = queryOne<{ discord_thread_id: string | null }>(
+    `SELECT discord_thread_id FROM tasks WHERE id = ?`,
+    [taskId],
+  );
+  if (!row?.discord_thread_id) return null;
+  return `agent:main:discord:thread:${row.discord_thread_id}`;
+}
+
+function resolveRelaySessionKey(event: SSEEvent, fallbackSessionKey: string): string {
+  if (!['task_updated', 'activity_logged', 'task_completed', 'deliverable_added'].includes(event.type)) {
+    return fallbackSessionKey;
+  }
+
+  const taskId = extractTaskIdForRouting(event);
+  if (!taskId) return fallbackSessionKey;
+
+  return getDiscordThreadSessionKey(taskId) || fallbackSessionKey;
+}
+
 export async function relayMissionControlEventToDiscord(event: SSEEvent): Promise<void> {
-  const sessionKey = getDiscordRelaySessionKey();
-  if (!sessionKey) {
+  const defaultSessionKey = getDiscordRelaySessionKey();
+  if (!defaultSessionKey) {
     logOpenClawDiagnostic({
       kind: 'discord_relay',
       status: 'skipped',
@@ -70,6 +105,8 @@ export async function relayMissionControlEventToDiscord(event: SSEEvent): Promis
     });
     return;
   }
+
+  const sessionKey = resolveRelaySessionKey(event, defaultSessionKey);
 
   try {
     logOpenClawDiagnostic({

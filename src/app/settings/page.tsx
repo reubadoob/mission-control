@@ -223,6 +223,8 @@ export default function SettingsPage() {
             <li><code>OPENCLAW_DISCORD_TASK_COMMANDS_ENABLED</code> - Enable Discord <code>!task</code> command ingestion</li>
             <li><code>OPENCLAW_DISCORD_TASK_COMMAND_USER_ALLOWLIST</code> - Comma-separated Discord user IDs allowed to create tasks (optional)</li>
             <li><code>OPENCLAW_DISCORD_TASK_WORKSPACE_ID</code> - Workspace target for Discord-created tasks (default: <code>default</code>)</li>
+            <li><code>DISCORD_TASK_DM_ENABLED</code> - Enable DM task intake (session keys like <code>agent:main:discord:dm:&lt;userId&gt;</code>)</li>
+            <li><code>DISCORD_TASK_DM_AUDIT_CHANNEL</code> - Optional Discord channel ID to mirror DM task creation notices</li>
           </ul>
           <p className="text-xs text-blue-400 mt-3">
             Environment variables take precedence over UI settings for server-side operations.

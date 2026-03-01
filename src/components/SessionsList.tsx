@@ -6,7 +6,8 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { Bot, CheckCircle, Circle, XCircle, Trash2, Check } from 'lucide-react';
+import { Bot, CheckCircle, Circle, XCircle, Trash2, Check, TerminalSquare } from 'lucide-react';
+import { SessionConsole } from './SessionConsole';
 
 interface SessionWithAgent {
   id: string;
@@ -30,6 +31,10 @@ interface SessionsListProps {
 export function SessionsList({ taskId }: SessionsListProps) {
   const [sessions, setSessions] = useState<SessionWithAgent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedSession, setSelectedSession] = useState<{
+    id: string;
+    isActive: boolean;
+  } | null>(null);
 
   const loadSessions = useCallback(async () => {
     try {
@@ -73,11 +78,11 @@ export function SessionsList({ taskId }: SessionsListProps) {
 
     if (hours > 0) {
       return `${hours}h ${minutes % 60}m`;
-    } else if (minutes > 0) {
-      return `${minutes}m ${seconds % 60}s`;
-    } else {
-      return `${seconds}s`;
     }
+    if (minutes > 0) {
+      return `${minutes}m ${seconds % 60}s`;
+    }
+    return `${seconds}s`;
   };
 
   const formatTimestamp = (timestamp: string) => {
@@ -88,6 +93,11 @@ export function SessionsList({ taskId }: SessionsListProps) {
       hour: 'numeric',
       minute: '2-digit',
     });
+  };
+
+  const isSessionActive = (status: string) => {
+    const normalized = status.toLowerCase();
+    return normalized === 'active' || normalized === 'working';
   };
 
   const handleMarkComplete = async (sessionId: string) => {
@@ -140,77 +150,92 @@ export function SessionsList({ taskId }: SessionsListProps) {
   }
 
   return (
-    <div className="space-y-3">
-      {sessions.map((session) => (
-        <div
-          key={session.id}
-          className="flex gap-3 p-3 bg-mc-bg rounded-lg border border-mc-border"
-        >
-          {/* Agent Avatar */}
-          <div className="flex-shrink-0">
-            {session.agent_avatar_emoji ? (
-              <span className="text-2xl">{session.agent_avatar_emoji}</span>
-            ) : (
-              <Bot className="w-8 h-8 text-mc-accent" />
-            )}
-          </div>
-
-          {/* Content */}
-          <div className="flex-1 min-w-0">
-            {/* Agent name and status */}
-            <div className="flex items-center gap-2 mb-1">
-              {getStatusIcon(session.status)}
-              <span className="font-medium text-mc-text">
-                {session.agent_name || 'Sub-Agent'}
-              </span>
-              <span className="text-xs text-mc-text-secondary capitalize">
-                {session.status}
-              </span>
+    <>
+      <div className="space-y-3">
+        {sessions.map((session) => (
+          <div
+            key={session.id}
+            className="flex gap-3 p-3 bg-mc-bg rounded-lg border border-mc-border"
+          >
+            <div className="flex-shrink-0">
+              {session.agent_avatar_emoji ? (
+                <span className="text-2xl">{session.agent_avatar_emoji}</span>
+              ) : (
+                <Bot className="w-8 h-8 text-mc-accent" />
+              )}
             </div>
 
-            {/* Session ID */}
-            <div className="text-xs text-mc-text-secondary font-mono mb-2 truncate">
-              Session: {session.openclaw_session_id}
-            </div>
-
-            {/* Duration and timestamps */}
-            <div className="flex items-center gap-3 text-xs text-mc-text-secondary">
-              <span>
-                Duration: {formatDuration(session.created_at, session.ended_at)}
-              </span>
-              <span>•</span>
-              <span>Started {formatTimestamp(session.created_at)}</span>
-            </div>
-
-            {/* Channel */}
-            {session.channel && (
-              <div className="mt-2 text-xs text-mc-text-secondary">
-                Channel: <span className="font-mono">{session.channel}</span>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1">
+                {getStatusIcon(session.status)}
+                <span className="font-medium text-mc-text">
+                  {session.agent_name || 'Sub-Agent'}
+                </span>
+                <span className="text-xs text-mc-text-secondary capitalize">
+                  {session.status}
+                </span>
               </div>
-            )}
-          </div>
 
-          {/* Action Buttons */}
-          <div className="flex flex-col gap-1">
-            {session.status === 'active' && (
+              <div className="text-xs text-mc-text-secondary font-mono mb-2 truncate">
+                Session: {session.openclaw_session_id}
+              </div>
+
+              <div className="flex items-center gap-3 text-xs text-mc-text-secondary">
+                <span>
+                  Duration: {formatDuration(session.created_at, session.ended_at)}
+                </span>
+                <span>•</span>
+                <span>Started {formatTimestamp(session.created_at)}</span>
+              </div>
+
+              {session.channel && (
+                <div className="mt-2 text-xs text-mc-text-secondary">
+                  Channel: <span className="font-mono">{session.channel}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-1">
               <button
-                onClick={() => handleMarkComplete(session.openclaw_session_id)}
-                className="p-1.5 hover:bg-mc-bg-tertiary rounded text-green-500"
-                title="Mark as complete"
+                onClick={() =>
+                  setSelectedSession({
+                    id: session.openclaw_session_id,
+                    isActive: isSessionActive(session.status),
+                  })
+                }
+                className="p-1.5 hover:bg-mc-bg-tertiary rounded text-mc-text-secondary hover:text-mc-accent"
+                title="View output"
               >
-                <Check className="w-4 h-4" />
+                <TerminalSquare className="w-4 h-4" />
               </button>
-            )}
-            <button
-              onClick={() => handleDelete(session.openclaw_session_id)}
-              className="p-1.5 hover:bg-mc-bg-tertiary rounded text-red-500"
-              title="Delete session"
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
+              {session.status === 'active' && (
+                <button
+                  onClick={() => handleMarkComplete(session.openclaw_session_id)}
+                  className="p-1.5 hover:bg-mc-bg-tertiary rounded text-green-500"
+                  title="Mark as complete"
+                >
+                  <Check className="w-4 h-4" />
+                </button>
+              )}
+              <button
+                onClick={() => handleDelete(session.openclaw_session_id)}
+                className="p-1.5 hover:bg-mc-bg-tertiary rounded text-red-500"
+                title="Delete session"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
           </div>
-        </div>
-      ))}
-    </div>
+        ))}
+      </div>
+
+      {selectedSession && (
+        <SessionConsole
+          sessionId={selectedSession.id}
+          isActive={selectedSession.isActive}
+          onClose={() => setSelectedSession(null)}
+        />
+      )}
+    </>
   );
 }

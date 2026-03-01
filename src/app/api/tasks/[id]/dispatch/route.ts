@@ -1,9 +1,13 @@
+import { createHash, randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { queryOne, queryAll, run } from '@/lib/db';
 import { getOpenClawClient } from '@/lib/openclaw/client';
 import { broadcast } from '@/lib/events';
 import { getProjectsPath, getMissionControlUrl } from '@/lib/config';
+import { fetchAgentContext } from '@/lib/context/agent-context';
+import { buildDispatchPrompt, estimateTokens } from '@/lib/prompts/dispatch';
+import { prepareWorktree, WORKTREE_BASE_BRANCH } from '@/lib/workspace';
 import type { Task, Agent, OpenClawSession } from '@/lib/types';
 
 interface RouteParams {
@@ -162,35 +166,109 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const taskProjectDir = `${projectsPath}/${projectDir}`;
     const missionControlUrl = getMissionControlUrl();
 
-    const taskMessage = `${priorityEmoji} **NEW TASK ASSIGNED**
+    const repoPath = process.env.GIT_REPO_ROOT;
+    let workspaceContext = '';
+    let preparedWorktreePath: string | null = null;
 
-**Title:** ${task.title}
-${task.description ? `**Description:** ${task.description}\n` : ''}
-**Priority:** ${task.priority.toUpperCase()}
-${task.due_date ? `**Due:** ${task.due_date}\n` : ''}
-**Task ID:** ${task.id}
+    if (!repoPath) {
+      console.warn('GIT_REPO_ROOT is not set; skipping worktree preparation.');
+      run(
+        `INSERT INTO task_activities (id, task_id, agent_id, activity_type, message, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          randomUUID(),
+          task.id,
+          agent.id,
+          'status_changed',
+          'Worktree preparation skipped because GIT_REPO_ROOT is not set.',
+          now,
+        ],
+      );
+    } else {
+      try {
+        const { worktreePath, branchName } = await prepareWorktree(task.id, task.title, repoPath);
+        preparedWorktreePath = worktreePath;
+        workspaceContext = `**WORKTREE_PATH:** ${worktreePath}\n**BRANCH_NAME:** ${branchName}\n**BASE_BRANCH:** ${WORKTREE_BASE_BRANCH}\n**REPO_PATH:** ${repoPath}\n\n`;
 
-**OUTPUT DIRECTORY:** ${taskProjectDir}
-Create this directory and save all deliverables there.
+        run(
+          `INSERT INTO task_activities (id, task_id, agent_id, activity_type, message, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [
+            randomUUID(),
+            task.id,
+            agent.id,
+            'status_changed',
+            `Prepared isolated worktree: ${worktreePath} (${branchName})`,
+            now,
+          ],
+        );
+      } catch (error) {
+        console.warn('Worktree preparation failed, continuing dispatch:', error);
 
-**IMPORTANT:** After completing work, you MUST call these APIs:
-1. Log activity: POST ${missionControlUrl}/api/tasks/${task.id}/activities
-   Body: {"activity_type": "completed", "message": "Description of what was done"}
-2. Register deliverable: POST ${missionControlUrl}/api/tasks/${task.id}/deliverables
-   Body: {"deliverable_type": "file", "title": "File name", "path": "${taskProjectDir}/filename.html"}
-3. Update status: PATCH ${missionControlUrl}/api/tasks/${task.id}
-   Body: {"status": "review"}
+        run(
+          `INSERT INTO task_activities (id, task_id, agent_id, activity_type, message, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [
+            randomUUID(),
+            task.id,
+            agent.id,
+            'status_changed',
+            `Worktree preparation failed (continuing without isolation): ${error instanceof Error ? error.message : 'unknown error'}`,
+            now,
+          ],
+        );
+      }
+    }
 
-When complete, reply with:
-\`TASK_COMPLETE: [brief summary of what you did]\`
+    const agentContext = await fetchAgentContext();
 
-If progress takes more than a few minutes, send:
-\`PROGRESS_UPDATE: [what changed] | next: [next step] | eta: [time]\`
+    const systemRole = `You are ${agent.name}, a Mission Control execution agent working in OpenClaw sessions. You can inspect/edit files, run shell commands, create branches/worktrees, run tests, and produce PR-ready deliverables. Execute with production quality and clear progress reporting.`;
 
-If blocked, send:
-\`BLOCKED: [what is blocked] | need: [specific input] | meanwhile: [fallback work]\`
+    const businessContextParts = [
+      `${priorityEmoji} New task assigned by Mission Control.`,
+      `Title: ${task.title}`,
+      task.description ? `Description: ${task.description}` : null,
+      `Priority: ${task.priority.toUpperCase()}`,
+      task.due_date ? `Due: ${task.due_date}` : null,
+      `Task ID: ${task.id}`,
+      `Output directory: ${taskProjectDir}`,
+      workspaceContext.trim(),
+      agentContext ? `Live GearSwitchr Context:\n${agentContext}` : 'Live GearSwitchr Context: unavailable (API unavailable or key missing).',
+    ].filter(Boolean);
 
-If you need help or clarification, ask the orchestrator.`;
+    const taskSpec = [
+      'Required API calls before completion:',
+      `1) POST ${missionControlUrl}/api/tasks/${task.id}/activities with {"activity_type":"completed","message":"Description of what was done"}`,
+      `2) POST ${missionControlUrl}/api/tasks/${task.id}/deliverables with {"deliverable_type":"file","title":"File name","path":"${taskProjectDir}/filename.html"}`,
+      `3) PATCH ${missionControlUrl}/api/tasks/${task.id} with {"status":"review"}`,
+      '',
+      `After PR merge, cleanup from ${repoPath ?? 'repository root (GIT_REPO_ROOT not set at dispatch time)'}: git worktree remove ${preparedWorktreePath ?? `/tmp/mc-task-${task.id}`} --force`,
+      'If clarification is needed, ask the orchestrator with a concrete question.',
+    ].join('\n');
+
+    const constraints = [
+      'Completion signal format (required):',
+      'TASK_COMPLETE: <brief summary>',
+      'PROGRESS_UPDATE: <what changed> | next: <next step> | eta: <time>',
+      'BLOCKED: <what is blocked> | need: <specific input> | meanwhile: <fallback work>',
+      '',
+      'Worktree instructions:',
+      '- Use the prepared worktree/branch when provided in business context.',
+      '- Keep all changes and outputs inside the assigned repo/worktree.',
+      '- Do not drift from task scope; do not start unrelated work.',
+    ].join('\n');
+
+    const promptBody = buildDispatchPrompt({
+      systemRole,
+      businessContext: businessContextParts.join('\n'),
+      taskSpec,
+      constraints,
+    });
+
+    const promptVersion = 'v1';
+    const promptChecksum = createHash('sha256').update(promptBody).digest('hex').slice(0, 12);
+    const taskMessage = `<!-- dispatch-prompt:${promptVersion} checksum:${promptChecksum} -->\n${promptBody}`;
+    const estimatedTokens = estimateTokens(taskMessage);
 
     // Send message to agent's session using chat.send.
     // Start with a lightweight handshake so stale sessions get rehydrated before task dispatch.
@@ -237,11 +315,41 @@ If you need help or clarification, ask the orchestrator.`;
       );
 
       // Log dispatch activity to task_activities table (for Activity tab)
-      const activityId = crypto.randomUUID();
+      const activityId = randomUUID();
       run(
         `INSERT INTO task_activities (id, task_id, agent_id, activity_type, message, created_at)
          VALUES (?, ?, ?, ?, ?, ?)`,
         [activityId, task.id, agent.id, 'status_changed', `Task dispatched to ${agent.name} - Agent is now working on this task`, now]
+      );
+
+      const tokenActivityId = randomUUID();
+      run(
+        `INSERT INTO task_activities (id, task_id, agent_id, activity_type, message, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          tokenActivityId,
+          task.id,
+          agent.id,
+          'updated',
+          `Dispatch prompt metadata: version=${promptVersion}, checksum=${promptChecksum}, estimated_tokens=${estimatedTokens}`,
+          now,
+        ]
+      );
+
+      const contextActivityId = randomUUID();
+      run(
+        `INSERT INTO task_activities (id, task_id, agent_id, activity_type, message, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          contextActivityId,
+          task.id,
+          agent.id,
+          'updated',
+          agentContext
+            ? 'Live GearSwitchr context injected into dispatch prompt'
+            : 'Live GearSwitchr context skipped (API unavailable or key missing)',
+          now,
+        ]
       );
 
       return NextResponse.json({

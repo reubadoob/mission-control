@@ -149,8 +149,15 @@ This architecture is built for professional velocity, not free tiers.
 | Command | Description |
 |---|---|
 | `!task <title> \| <description>` | Create a new task in Mission-Claw inbox |
+| `!task <title> \| <description> \| agent:<name>` | Create task and target a specific agent by name (case-insensitive) |
+| `!task <title> \| <description> \| priority:<low\|normal\|high\|urgent>` | Create task with explicit priority |
+| `!task <title> \| <description> \| agent:<name> \| priority:<...>` | Combine explicit assignee + priority |
+| `!task-status <id>` | Show task status and most recent activity |
+| `!task-list` | List in-progress tasks (id, title, assigned agent) |
+| `!task-blockers` | List in-progress tasks with active BLOCKED activity |
+| `!task-review <id>` | Move a task to `review` |
 
-Commands are rate-limited per user and require the sender to be on the allowlist configured in `DISCORD_TASK_COMMAND_ALLOWLIST`.
+Commands are deduped and allowlist-protected. Rate limits apply per user, but IDs in `OPENCLAW_DISCORD_TASK_OWNER_IDS` bypass only the min-interval throttle.
 
 ---
 
@@ -167,13 +174,15 @@ Commands are rate-limited per user and require the sender to be on the allowlist
 # OpenClaw connection
 OPENCLAW_GATEWAY_URL=http://localhost:3001
 OPENCLAW_API_KEY=your-api-key
+INTERNAL_CONTEXT_API_KEY=your-internal-context-api-key
 
 # Discord relay — the OpenClaw session key for the Discord channel
 DISCORD_RELAY_SESSION_KEY=agent:main:discord:channel:<channel-id>
 
 # Discord task command ingestion
-DISCORD_TASK_COMMAND_ENABLED=true
-DISCORD_TASK_COMMAND_ALLOWLIST=user-id-1,user-id-2
+OPENCLAW_DISCORD_TASK_COMMANDS_ENABLED=true
+OPENCLAW_DISCORD_TASK_COMMAND_USER_ALLOWLIST=user-id-1,user-id-2
+OPENCLAW_DISCORD_TASK_OWNER_IDS=discord-owner-id-1,discord-owner-id-2
 
 # File paths
 PROJECTS_PATH=~/projects

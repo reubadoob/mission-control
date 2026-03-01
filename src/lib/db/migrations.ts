@@ -265,6 +265,19 @@ const migrations: Migration[] = [
 
       console.log('[Migration 008] Active session uniqueness index ready');
     }
+  },
+  {
+    id: '009',
+    name: 'add_discord_thread_id_to_tasks',
+    up: (db) => {
+      console.log('[Migration 009] Adding discord_thread_id column to tasks...');
+
+      const tasksInfo = db.prepare("PRAGMA table_info(tasks)").all() as { name: string }[];
+      if (!tasksInfo.some(col => col.name === 'discord_thread_id')) {
+        db.exec(`ALTER TABLE tasks ADD COLUMN discord_thread_id TEXT`);
+        console.log('[Migration 009] Added discord_thread_id to tasks');
+      }
+    }
   }
 ];
 

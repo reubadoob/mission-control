@@ -64,6 +64,7 @@ export interface Task {
   workspace_id: string;
   business_id: string;
   due_date?: string;
+  discord_thread_id?: string | null;
   created_at: string;
   updated_at: string;
   // Joined fields
