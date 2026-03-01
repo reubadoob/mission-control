@@ -9,6 +9,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Settings, Save, RotateCcw, Home, FolderOpen, Link as LinkIcon } from 'lucide-react';
 import { getConfig, updateConfig, resetConfig, type MissionControlConfig } from '@/lib/config';
+import { CostPanel } from '@/components/CostPanel';
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -201,6 +202,17 @@ export default function SettingsPage() {
                 URL where Mission Control is running. Auto-detected by default. Change for remote access.
               </p>
             </div>
+          </div>
+        </section>
+
+        {/* Token & Cost Tracking */}
+        <section className="mb-8 p-6 bg-mc-bg-secondary border border-mc-border rounded-lg">
+          <h2 className="text-xl font-semibold text-mc-text mb-2">Token & Cost Tracking</h2>
+          <p className="text-sm text-mc-text-secondary mb-4">
+            Estimated token usage and spend from dispatch activity over the last 7 days.
+          </p>
+          <div className="rounded-lg border border-mc-border overflow-hidden">
+            <CostPanel />
           </div>
         </section>
 
