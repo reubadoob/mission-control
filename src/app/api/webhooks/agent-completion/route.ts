@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { createHmac } from 'crypto';
 import { queryOne, queryAll, run } from '@/lib/db';
 import { broadcast } from '@/lib/events';
+import { parseDeliverables } from '@/lib/openclaw/parse-deliverables';
 import type { Task, Agent, OpenClawSession } from '@/lib/types';
 
 /**
@@ -10,7 +11,7 @@ import type { Task, Agent, OpenClawSession } from '@/lib/types';
  */
 function verifyWebhookSignature(signature: string, rawBody: string): boolean {
   const webhookSecret = process.env.WEBHOOK_SECRET;
-  
+
   if (!webhookSecret) {
     // Dev mode - skip validation
     return true;
@@ -20,11 +21,52 @@ function verifyWebhookSignature(signature: string, rawBody: string): boolean {
     return false;
   }
 
-  const expectedSignature = createHmac('sha256', webhookSecret)
-    .update(rawBody)
-    .digest('hex');
+  const expectedSignature = createHmac('sha256', webhookSecret).update(rawBody).digest('hex');
 
   return signature === expectedSignature;
+}
+
+function ingestDeliverables(taskId: string, summary: string): number {
+  const items = parseDeliverables(summary);
+  let count = 0;
+  for (const item of items) {
+    const duplicate = queryOne<{ id: string }>(
+      `SELECT id FROM task_deliverables
+       WHERE task_id = ? AND deliverable_type = ? AND title = ? AND COALESCE(path, '') = COALESCE(?, '')`,
+      [taskId, item.deliverable_type, item.title, item.path || null],
+    );
+    if (duplicate) continue;
+
+    const id = uuidv4();
+    const createdAt = new Date().toISOString();
+    run(
+      `INSERT INTO task_deliverables (id, task_id, deliverable_type, title, path, description, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        taskId,
+        item.deliverable_type,
+        item.title,
+        item.path || null,
+        'Auto-ingested from TASK_COMPLETE signal',
+        createdAt,
+      ],
+    );
+    broadcast({
+      type: 'deliverable_added',
+      payload: {
+        id,
+        task_id: taskId,
+        deliverable_type: item.deliverable_type,
+        title: item.title,
+        path: item.path || undefined,
+        description: 'Auto-ingested from TASK_COMPLETE signal',
+        created_at: createdAt,
+      },
+    });
+    count++;
+  }
+  return count;
 }
 
 /**
@@ -109,6 +151,8 @@ export async function POST(request: NextRequest) {
           ['standby', now, task.assigned_agent_id]
         );
       }
+
+      ingestDeliverables(task.id, body.summary || '');
 
       broadcast({
         type: 'task_updated',
@@ -200,6 +244,8 @@ export async function POST(request: NextRequest) {
         'UPDATE agents SET status = ?, updated_at = ? WHERE id = ?',
         ['standby', now, session.agent_id]
       );
+
+      ingestDeliverables(task.id, summary);
 
       broadcast({
         type: 'task_updated',

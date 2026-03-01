@@ -3,6 +3,7 @@ import { getMissionControlUrl } from '@/lib/config';
 import { queryOne, run } from '@/lib/db';
 import { broadcast } from '@/lib/events';
 import { logOpenClawDiagnostic } from '@/lib/openclaw/diagnostics';
+import { parseDeliverables } from '@/lib/openclaw/parse-deliverables';
 import type { OpenClawSession, Task } from '@/lib/types';
 
 const observedClients = new WeakSet<OpenClawClient>();
@@ -236,56 +237,6 @@ function addTaskActivity(params: {
   });
 }
 
-function parseDeliverables(summary: string): Array<{ deliverable_type: 'url' | 'file' | 'artifact'; title: string; path?: string }> {
-  const match = summary.match(/deliverables?\s*:\s*([^|]+)/i);
-  if (!match) return [];
-
-  const raw = match[1].trim();
-  if (!raw) return [];
-
-  const parts = raw
-    .split(/,\s*|\n+/)
-    .map((p) => p.trim())
-    .filter(Boolean);
-
-  const result: Array<{ deliverable_type: 'url' | 'file' | 'artifact'; title: string; path?: string }> = [];
-  for (const part of parts) {
-    const md = part.match(/\[([^\]]+)\]\(([^)]+)\)/);
-    const normalized = md ? md[2].trim() : part;
-    const label = md ? md[1].trim() : normalized;
-
-    if (/^https?:\/\//i.test(normalized)) {
-      result.push({
-        deliverable_type: 'url',
-        title: label,
-        path: normalized,
-      });
-      continue;
-    }
-
-    if (
-      normalized.startsWith('/') ||
-      normalized.startsWith('~/') ||
-      normalized.startsWith('./') ||
-      normalized.includes('/')
-    ) {
-      result.push({
-        deliverable_type: 'file',
-        title: label,
-        path: normalized,
-      });
-      continue;
-    }
-
-    result.push({
-      deliverable_type: 'artifact',
-      title: label,
-    });
-  }
-
-  return result;
-}
-
 function addDeliverablesFromSummary(taskId: string, summary: string): number {
   const items = parseDeliverables(summary);
   let created = 0;
@@ -339,8 +290,13 @@ export async function triggerSyntheticCompletionForward(
   summary: string,
 ): Promise<{ sessionId: string; message: string }> {
   const cleanSessionId = normalizeSessionId(sessionId);
-  if (!cleanSessionId || !cleanSessionId.startsWith('mission-control-')) {
-    throw new Error('session_id must resolve to a mission-control-* session');
+  const isValidSession =
+    !!cleanSessionId &&
+    (cleanSessionId.startsWith('mission-control-') ||
+      cleanSessionId.startsWith('subagent:') ||
+      cleanSessionId.includes(':subagent:'));
+  if (!isValidSession) {
+    throw new Error('session_id must resolve to a mission-control-* or subagent session');
   }
 
   const safeSummary = summary.trim() || 'synthetic completion test';
@@ -358,7 +314,11 @@ export function attachCompletionObserver(client: OpenClawClient): void {
       const wrapper = notification as { params?: unknown };
       const sessionId = extractSessionId(notification) || extractSessionId(wrapper?.params) || null;
       if (!sessionId) return;
-      if (!sessionId.startsWith('mission-control-')) return;
+      const isValidSession =
+        sessionId.startsWith('mission-control-') ||
+        sessionId.startsWith('subagent:') ||
+        sessionId.includes(':subagent:');
+      if (!isValidSession) return;
 
       const signals = extractSignals(notification);
       if (signals.length === 0) return;
