@@ -371,6 +371,19 @@ const migrations: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_webhook_queue_status ON webhook_queue(status)`);
       db.exec(`CREATE INDEX IF NOT EXISTS idx_webhook_queue_next_attempt ON webhook_queue(next_attempt_at)`);
     }
+  },
+  {
+    id: '013',
+    name: 'add_task_metadata_column',
+    up: (db) => {
+      console.log('[Migration 013] Adding metadata column to tasks...');
+
+      const tasksInfo = db.prepare("PRAGMA table_info(tasks)").all() as { name: string }[];
+      if (!tasksInfo.some(col => col.name === 'metadata')) {
+        db.exec(`ALTER TABLE tasks ADD COLUMN metadata TEXT DEFAULT NULL`);
+        console.log('[Migration 013] Added metadata to tasks');
+      }
+    }
   }
 ];
 

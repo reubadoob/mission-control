@@ -17,6 +17,15 @@ const MIN_DESCRIPTION_LENGTH = 5;
 const TASK_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_DISCORD_THREAD_NAME_LENGTH = 100;
 const DISCORD_DM_SESSION_KEY_RE = /^agent:main:discord:dm:[^:]+$/i;
+const ORCHESTRATOR_AGENT_ID = '0d6529a4-22e5-4182-b82c-15654c0ac0f6';
+const DEVELOPER_AGENT_ID = '72e5814f-3932-4249-81bb-049cda09d7cf';
+
+function buildInternalApiHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const apiToken = process.env.MC_API_TOKEN;
+  if (apiToken) headers['Authorization'] = `Bearer ${apiToken}`;
+  return headers;
+}
 
 function pruneCache(map: Map<string, number>, ttlMs: number, now: number): void {
   for (const [key, value] of Array.from(map.entries())) {
@@ -147,6 +156,15 @@ function parseTaskIdCommand(commandText: string, prefix: string): string | null 
   return TASK_ID_PATTERN.test(match[1].trim()) ? match[1].trim() : null;
 }
 
+function parseTaskDispatchCommand(commandText: string): { taskId: string; agentName: string } | null {
+  const match = commandText.match(/^!task-dispatch\s+([0-9a-f-]{36})\s+agent\s*:\s*(.+)$/i);
+  if (!match) return null;
+  const taskId = match[1].trim();
+  const agentName = match[2].trim();
+  if (!TASK_ID_PATTERN.test(taskId) || !agentName) return null;
+  return { taskId, agentName };
+}
+
 function logAudit(status: 'attempt' | 'rejected' | 'success' | 'failure', message: string, metadata: Record<string, unknown>): void {
   run(`INSERT INTO events (id, type, message, metadata, created_at) VALUES (?, ?, ?, ?, ?)`, [uuidv4(), 'system', `[openclaw:discord_task_command:${status}] ${message}`, JSON.stringify(metadata), new Date().toISOString()]);
 }
@@ -176,18 +194,34 @@ function setTaskDiscordThreadId(taskId: string, threadId: string): void {
   run(`UPDATE tasks SET discord_thread_id = ?, updated_at = ? WHERE id = ?`, [threadId, new Date().toISOString(), taskId]);
 }
 
-function createTaskFromDiscordCommand(input: { title: string; description: string; workspaceId: string; priority: TaskPriority; senderId: string | null; sessionKey: string; requestedAgentName?: string | null }): Task {
+function createTaskFromDiscordCommand(input: { title: string; description: string; workspaceId: string; priority: TaskPriority; senderId: string | null; sessionKey: string; requestedAgentName?: string | null; forceOrchestratorRouting?: boolean }): { task: Task; orchestrationWarning: string | null } {
   const now = new Date().toISOString();
   const taskId = uuidv4();
   const creator = queryOne<Agent>(`SELECT id FROM agents WHERE workspace_id = ? ORDER BY is_master DESC, updated_at DESC LIMIT 1`, [input.workspaceId]);
 
   const requestedAssignee = input.requestedAgentName ? queryOne<Agent>(`SELECT * FROM agents WHERE workspace_id = ? AND status != 'offline' AND lower(name) = lower(?) ORDER BY is_master ASC, datetime(updated_at) DESC LIMIT 1`, [input.workspaceId, input.requestedAgentName]) : null;
-  const assignee = requestedAssignee || queryOne<Agent>(`SELECT * FROM agents WHERE workspace_id = ? AND is_master = 0 AND status != 'offline' ORDER BY CASE status WHEN 'standby' THEN 0 WHEN 'working' THEN 1 ELSE 2 END, datetime(updated_at) DESC LIMIT 1`, [input.workspaceId]) || queryOne<Agent>(`SELECT * FROM agents WHERE workspace_id = ? AND is_master = 1 AND status != 'offline' ORDER BY datetime(updated_at) DESC LIMIT 1`, [input.workspaceId]) || null;
+  const orchestratorAssignee = input.forceOrchestratorRouting
+    ? queryOne<Agent>(`SELECT * FROM agents WHERE workspace_id = ? AND id = ? AND status != 'offline' LIMIT 1`, [input.workspaceId, ORCHESTRATOR_AGENT_ID])
+    : null;
+  const developerFallback = input.forceOrchestratorRouting && !orchestratorAssignee
+    ? queryOne<Agent>(`SELECT * FROM agents WHERE workspace_id = ? AND status != 'offline' AND (id = ? OR lower(name) = 'developer') ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, datetime(updated_at) DESC LIMIT 1`, [input.workspaceId, DEVELOPER_AGENT_ID, DEVELOPER_AGENT_ID])
+    : null;
 
+  const assignee = input.forceOrchestratorRouting
+    ? (orchestratorAssignee || developerFallback || null)
+    : (requestedAssignee
+      || queryOne<Agent>(`SELECT * FROM agents WHERE workspace_id = ? AND is_master = 0 AND status != 'offline' ORDER BY CASE status WHEN 'standby' THEN 0 WHEN 'working' THEN 1 ELSE 2 END, datetime(updated_at) DESC LIMIT 1`, [input.workspaceId])
+      || queryOne<Agent>(`SELECT * FROM agents WHERE workspace_id = ? AND is_master = 1 AND status != 'offline' ORDER BY datetime(updated_at) DESC LIMIT 1`, [input.workspaceId])
+      || null);
+
+  const taskMetadata = input.forceOrchestratorRouting && orchestratorAssignee ? JSON.stringify({ routing_mode: 'orchestrator' }) : null;
+  const orchestrationWarning = input.forceOrchestratorRouting && !orchestratorAssignee
+    ? '⚠️ Orchestrator is offline — routing to Developer instead'
+    : null;
   const initialStatus = assignee ? 'assigned' : 'inbox';
 
   transaction(() => {
-    run(`INSERT INTO tasks (id, title, description, status, priority, assigned_agent_id, created_by_agent_id, workspace_id, business_id, due_date, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [taskId, input.title, input.description, initialStatus, input.priority, assignee?.id || null, creator?.id || null, input.workspaceId, 'default', null, now, now]);
+    run(`INSERT INTO tasks (id, title, description, status, priority, assigned_agent_id, created_by_agent_id, workspace_id, business_id, due_date, metadata, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [taskId, input.title, input.description, initialStatus, input.priority, assignee?.id || null, creator?.id || null, input.workspaceId, 'default', null, taskMetadata, now, now]);
     run(`INSERT INTO events (id, type, task_id, agent_id, message, created_at) VALUES (?, ?, ?, ?, ?, ?)`, [uuidv4(), 'task_created', taskId, creator?.id || null, `Discord command created task: ${input.title}`, now]);
 
     if (assignee) {
@@ -211,7 +245,7 @@ function createTaskFromDiscordCommand(input: { title: string; description: strin
     priority: input.priority,
   });
 
-  return createdTask;
+  return { task: createdTask, orchestrationWarning };
 }
 
 function taskStatusReply(taskId: string, workspaceId: string): string {
@@ -229,6 +263,33 @@ function taskListReply(workspaceId: string): string {
 function taskBlockersReply(workspaceId: string): string {
   const tasks = queryAll<{ id: string; title: string; assigned_agent_name: string | null; blocked_at: string; blocked_message: string }>(`SELECT t.id, t.title, a.name as assigned_agent_name, latest.created_at as blocked_at, latest.message as blocked_message FROM tasks t LEFT JOIN agents a ON t.assigned_agent_id = a.id INNER JOIN (SELECT ta.task_id, ta.workspace_id, ta.created_at, ta.message FROM task_activities ta INNER JOIN (SELECT task_id, workspace_id, MAX(datetime(created_at)) AS max_created_at FROM task_activities GROUP BY task_id, workspace_id) last ON last.task_id = ta.task_id AND last.workspace_id = ta.workspace_id AND datetime(ta.created_at) = last.max_created_at) latest ON latest.task_id = t.id AND latest.workspace_id = t.workspace_id WHERE t.workspace_id = ? AND t.status = 'in_progress' AND lower(latest.message) LIKE 'blocked:%' ORDER BY datetime(latest.created_at) DESC LIMIT 25`, [workspaceId]);
   return tasks.length === 0 ? '✅ No active blockers found.' : `🧱 Blocked in-progress tasks (${tasks.length}):\n${tasks.map((t) => `- ${t.id} | ${t.title} | ${t.assigned_agent_name || 'unassigned'} | ${t.blocked_at}\n  ${t.blocked_message}`).join('\n')}`;
+}
+
+async function taskDispatchReply(taskId: string, agentName: string, workspaceId: string): Promise<string> {
+  const task = queryOne<{ id: string; title: string }>(`SELECT id, title FROM tasks WHERE id = ? AND workspace_id = ?`, [taskId, workspaceId]);
+  if (!task) return `❌ Task not found: ${taskId}`;
+
+  const agent = queryOne<Pick<Agent, 'id' | 'name'>>(`SELECT id, name FROM agents WHERE workspace_id = ? AND status != 'offline' AND lower(name) = lower(?) LIMIT 1`, [workspaceId, agentName]);
+  if (!agent) return `❌ Agent ${agentName} not found or offline.`;
+
+  const now = new Date().toISOString();
+  transaction(() => {
+    run(`UPDATE tasks SET assigned_agent_id = ?, status = 'assigned', updated_at = ? WHERE id = ? AND workspace_id = ?`, [agent.id, now, task.id, workspaceId]);
+    run(`INSERT INTO events (id, type, task_id, agent_id, message, created_at) VALUES (?, ?, ?, ?, ?, ?)`, [uuidv4(), 'task_assigned', task.id, agent.id, `"${task.title}" assigned to ${agent.name} (!task-dispatch)`, now]);
+    run(`INSERT INTO task_activities (id, task_id, workspace_id, agent_id, activity_type, message, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, [uuidv4(), task.id, workspaceId, agent.id, 'status_changed', `Assigned to ${agent.name} via !task-dispatch`, now]);
+  });
+
+  const dispatchUrl = `${getMissionControlUrl()}/api/tasks/${task.id}/dispatch`;
+  const response = await fetch(dispatchUrl, { method: 'POST', headers: buildInternalApiHeaders() });
+  if (!response.ok) {
+    const details = (await response.text()).slice(0, 300);
+    return `⚠️ Assigned ${task.title} to ${agent.name}, but dispatch failed: ${details || `HTTP ${response.status}`}`;
+  }
+
+  const updated = queryOne<Task>(`SELECT t.*, aa.name as assigned_agent_name, aa.avatar_emoji as assigned_agent_emoji, ca.name as created_by_agent_name, ca.avatar_emoji as created_by_agent_emoji FROM tasks t LEFT JOIN agents aa ON t.assigned_agent_id = aa.id LEFT JOIN agents ca ON t.created_by_agent_id = ca.id WHERE t.id = ? AND t.workspace_id = ?`, [task.id, workspaceId]);
+  if (updated) broadcast({ type: 'task_updated', payload: updated });
+
+  return `🚀 Dispatched ${task.title} to ${agent.name}`;
 }
 
 function taskReviewReply(taskId: string, workspaceId: string): string {
@@ -260,7 +321,7 @@ export function attachDiscordTaskCommandObserver(client: OpenClawClient): void {
       const sessionKey = normalizeSessionKey(extractSessionKey(notification));
       if (!sessionKey || !isObservedSessionKey(config.sessionKey, config.dmEnabled, sessionKey)) return;
 
-      const commandText = extractCommandText(notification, [config.commandPrefix, '!task-status', '!task-blockers', '!task-list', '!task-review']);
+      const commandText = extractCommandText(notification, [config.commandPrefix, '!task-status', '!task-blockers', '!task-list', '!task-review', '!task-dispatch']);
       if (!commandText) return;
 
       const senderRole = extractSenderRole(notification);
@@ -274,7 +335,7 @@ export function attachDiscordTaskCommandObserver(client: OpenClawClient): void {
       }
 
       const now = Date.now();
-      const isQuickAction = /^!task-(status|list|blockers|review)\b/i.test(commandText);
+      const isQuickAction = /^!task-(status|list|blockers|review|dispatch)\b/i.test(commandText);
       pruneCache(dedupeCache, isQuickAction ? QUICK_ACTION_DEDUPE_TTL_MS : DEDUPE_TTL_MS, now);
       pruneCache(senderRateLimit, Math.max(config.minIntervalMs, 1000), now);
 
@@ -310,6 +371,12 @@ export function attachDiscordTaskCommandObserver(client: OpenClawClient): void {
         const taskId = parseTaskIdCommand(commandText, '!task-review');
         return void sendAck(client, sessionKey, taskId ? taskReviewReply(taskId, config.workspaceId) : '⚠️ Invalid format. Use: !task-review <task-id>', fingerprint);
       }
+      if (/^!task-dispatch\b/i.test(commandText)) {
+        const parsedDispatch = parseTaskDispatchCommand(commandText);
+        if (!parsedDispatch) return void sendAck(client, sessionKey, '⚠️ Invalid format. Use: !task-dispatch <task-id> agent:<name>', fingerprint);
+        const message = await taskDispatchReply(parsedDispatch.taskId, parsedDispatch.agentName, config.workspaceId);
+        return void sendAck(client, sessionKey, message, fingerprint);
+      }
 
       const parsed = parseTaskCommand(commandText, config.commandPrefix);
       if (!parsed) {
@@ -323,9 +390,14 @@ export function attachDiscordTaskCommandObserver(client: OpenClawClient): void {
         ].join('\n'), fingerprint);
       }
 
+      let forceOrchestratorRouting = !parsed.targetAgentName;
       if (parsed.targetAgentName) {
-        const targetAgent = queryOne<Pick<Agent, 'id'>>(`SELECT id FROM agents WHERE workspace_id = ? AND status != 'offline' AND lower(name) = lower(?) LIMIT 1`, [config.workspaceId, parsed.targetAgentName]);
-        if (!targetAgent) return void sendAck(client, sessionKey, `❌ Agent not found: ${parsed.targetAgentName}`, fingerprint);
+        const targetAgentAnyStatus = queryOne<Pick<Agent, 'id' | 'status'>>(`SELECT id, status FROM agents WHERE workspace_id = ? AND lower(name) = lower(?) LIMIT 1`, [config.workspaceId, parsed.targetAgentName]);
+        if (!targetAgentAnyStatus) return void sendAck(client, sessionKey, `❌ Agent not found: ${parsed.targetAgentName}`, fingerprint);
+        if (targetAgentAnyStatus.status === 'offline') {
+          forceOrchestratorRouting = true;
+          void sendAck(client, sessionKey, `⚠️ Agent ${parsed.targetAgentName} is currently offline. Routing to Orchestrator instead.`, `${fingerprint}-offline`);
+        }
       }
 
       const openTaskCount = queryOne<{ count: number }>(`SELECT COUNT(*) as count FROM tasks WHERE workspace_id = ? AND status != 'done'`, [config.workspaceId])?.count || 0;
@@ -336,12 +408,13 @@ export function attachDiscordTaskCommandObserver(client: OpenClawClient): void {
 
       logAudit('attempt', 'Processing Discord task command', { command: commandText, sender_id: senderId, session_key: sessionKey, workspace_id: config.workspaceId });
 
-      const created = createTaskFromDiscordCommand({
+      const { task: created, orchestrationWarning } = createTaskFromDiscordCommand({
         title: parsed.title,
         description: parsed.description,
         workspaceId: config.workspaceId,
         priority: parsed.priority || config.defaultPriority,
-        requestedAgentName: parsed.targetAgentName,
+        requestedAgentName: forceOrchestratorRouting ? null : parsed.targetAgentName,
+        forceOrchestratorRouting,
         senderId,
         sessionKey,
       });
@@ -364,9 +437,13 @@ export function attachDiscordTaskCommandObserver(client: OpenClawClient): void {
         }
       }
 
+      if (orchestrationWarning) {
+        void sendAck(client, sessionKey, orchestrationWarning, `${fingerprint}-orchestrator-fallback`);
+      }
+
       if (created.assigned_agent_id) {
         const dispatchUrl = `${getMissionControlUrl()}/api/tasks/${created.id}/dispatch`;
-        fetch(dispatchUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+        fetch(dispatchUrl, { method: 'POST', headers: buildInternalApiHeaders() })
           .then(async (response) => {
             if (!response.ok) {
               const details = await response.text();

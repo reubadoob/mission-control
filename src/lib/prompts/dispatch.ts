@@ -44,6 +44,50 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
+export function buildRoutingPrompt(params: {
+  taskId: string;
+  title: string;
+  description: string;
+  agents: Array<{ id: string; name: string; description?: string | null }>;
+  context?: string;
+}): string {
+  const agentList = params.agents
+    .map((a) => `- ${a.name} (id: ${a.id})${a.description ? `: ${a.description}` : ''}`)
+    .join('\n');
+
+  return `You are the Mission-Claw Orchestrator. Your ONLY job right now is to route a task to the correct agent.
+
+## Task
+ID: ${params.taskId}
+Title: ${params.title}
+Description: ${params.description}
+
+## Available Agents
+${agentList}
+
+## Business Context
+${params.context || 'No context available.'}
+
+## Instructions
+Read the task title and description. Pick the single best agent from the list above.
+
+Agent selection guide:
+- Code, PRs, features, bugs, infrastructure → Developer
+- Blog posts, docs, copy, marketing content → Writer
+- Research, competitive analysis, market intel → Researcher
+- Architecture decisions, system design, ADRs → Blueprint
+- UI/UX design, visual work → Designer
+- SEO content, keyword-optimized articles → SEO Content Editor
+
+## Required Output Format
+Your response must be ONLY this JSON, nothing else:
+\`\`\`json
+{ "agentId": "<id>", "agentName": "<name>", "rationale": "<one sentence why>" }
+\`\`\`
+
+Do not include any other text. Just the JSON block.`;
+}
+
 export function buildDispatchPrompt(sections: DispatchPromptSections): string {
   const systemRole = truncateSection(sections.systemRole, DISPATCH_PROMPT_LIMITS.systemRole);
   const businessContext = truncateSection(sections.businessContext, DISPATCH_PROMPT_LIMITS.businessContext);

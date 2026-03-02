@@ -8,6 +8,7 @@ import { getProjectsPath, getMissionControlUrl } from '@/lib/config';
 import { fetchAgentContext } from '@/lib/context/agent-context';
 import {
   buildDispatchPrompt,
+  buildRoutingPrompt,
   estimateTokens,
   REQUIRED_FINAL_OUTPUT_SECTION,
 } from '@/lib/prompts/dispatch';
@@ -20,6 +21,37 @@ interface RouteParams {
 }
 
 const MAX_DISPATCH_PROMPT_TOKENS = 4000;
+const ORCHESTRATOR_AGENT_ID = '0d6529a4-22e5-4182-b82c-15654c0ac0f6';
+const DEVELOPER_AGENT_ID = '72e5814f-3932-4249-81bb-049cda09d7cf';
+
+type RoutingMetadata = { routing_mode?: string; [key: string]: unknown };
+
+function parseTaskMetadata(raw: string | null | undefined): RoutingMetadata {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as RoutingMetadata;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function extractRoutingJson(content: string): { agentId: string; agentName: string; rationale: string } | null {
+  const fenced = content.match(/```json\s*([\s\S]*?)\s*```/i)?.[1] ?? content;
+  const start = fenced.indexOf('{');
+  const end = fenced.lastIndexOf('}');
+  if (start === -1 || end === -1 || end <= start) return null;
+
+  try {
+    const parsed = JSON.parse(fenced.slice(start, end + 1)) as { agentId?: unknown; agentName?: unknown; rationale?: unknown };
+    if (typeof parsed.agentId !== 'string' || typeof parsed.agentName !== 'string' || typeof parsed.rationale !== 'string') {
+      return null;
+    }
+    return { agentId: parsed.agentId, agentName: parsed.agentName, rationale: parsed.rationale };
+  } catch {
+    return null;
+  }
+}
 
 function enforceDispatchTokenBudget(prompt: string): string {
   const requiredSuffix = `\n\n${REQUIRED_FINAL_OUTPUT_SECTION}`;
@@ -41,6 +73,110 @@ function enforceDispatchTokenBudget(prompt: string): string {
   return `${basePrefix.slice(0, availableChars).trimEnd()}${requiredSuffix}`;
 }
 
+async function runOrchestratorRouting(params: {
+  task: Task & { assigned_agent_name?: string; workspace_id: string; metadata?: string | null };
+  client: ReturnType<typeof getOpenClawClient>;
+  now: string;
+}): Promise<{ resolvedAgentId: string; resolvedAgentName: string; rationale: string }> {
+  const { task, client, now } = params;
+
+  const liveAgents = queryAll<Array<Pick<Agent, 'id' | 'name' | 'description'>>[number]>(
+    `SELECT id, name, description
+     FROM agents
+     WHERE workspace_id = ?
+       AND status != 'offline'
+       AND id != ?`,
+    [task.workspace_id, ORCHESTRATOR_AGENT_ID],
+  );
+
+  const agentContext = await fetchAgentContext();
+  const routingPrompt = buildRoutingPrompt({
+    taskId: task.id,
+    title: task.title,
+    description: task.description || task.title,
+    agents: liveAgents,
+    context: agentContext || undefined,
+  });
+
+  const fallbackAgent = queryOne<Pick<Agent, 'id' | 'name'>>(
+    `SELECT id, name FROM agents WHERE workspace_id = ? AND status != 'offline' AND (id = ? OR lower(name) = 'developer') LIMIT 1`,
+    [task.workspace_id, DEVELOPER_AGENT_ID]
+  ) || liveAgents[0] || null;
+
+  let resolvedAgentId = fallbackAgent?.id ?? DEVELOPER_AGENT_ID;
+  let resolvedAgentName = fallbackAgent?.name ?? 'Developer';
+  let rationale = 'Orchestrator routing failed — defaulted to Developer';
+
+  try {
+    const routingSession = await client.createSession('mission-control');
+    await client.sendMessage(routingSession.id, routingPrompt);
+
+    let routingResponse: string | null = null;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      const history = await client.getSessionHistory(routingSession.id, 25, 0);
+      const assistantMessage = [...history]
+        .reverse()
+        .find((entry) => entry && typeof entry === 'object' && (entry as { role?: unknown }).role === 'assistant') as { content?: unknown; text?: unknown; message?: unknown } | undefined;
+      const responseText = typeof assistantMessage?.content === 'string'
+        ? assistantMessage.content
+        : typeof assistantMessage?.text === 'string'
+          ? assistantMessage.text
+          : typeof assistantMessage?.message === 'string'
+            ? assistantMessage.message
+            : null;
+      if (responseText?.trim()) {
+        routingResponse = responseText;
+        break;
+      }
+    }
+
+    const parsed = routingResponse ? extractRoutingJson(routingResponse) : null;
+    if (parsed) {
+      const selected = queryOne<Pick<Agent, 'id' | 'name'>>(
+        `SELECT id, name FROM agents WHERE workspace_id = ? AND id = ? AND status != 'offline' LIMIT 1`,
+        [task.workspace_id, parsed.agentId],
+      );
+      if (selected) {
+        resolvedAgentId = selected.id;
+        resolvedAgentName = selected.name;
+        rationale = parsed.rationale;
+      }
+    }
+  } catch (error) {
+    console.warn('Orchestrator routing failed, defaulting to Developer:', error);
+  }
+
+  const currentMetadata = parseTaskMetadata(task.metadata);
+  const { routing_mode: _routingMode, ...remainingMetadata } = currentMetadata;
+  const updatedMetadata = Object.keys(remainingMetadata).length > 0 ? JSON.stringify(remainingMetadata) : null;
+
+  run(
+    `UPDATE tasks
+     SET assigned_agent_id = ?, metadata = ?, updated_at = ?
+     WHERE id = ?`,
+    [resolvedAgentId, updatedMetadata, now, task.id],
+  );
+
+  run(
+    `INSERT INTO task_activities (id, task_id, workspace_id, agent_id, activity_type, message, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      randomUUID(),
+      task.id,
+      task.workspace_id,
+      resolvedAgentId,
+      'updated',
+      resolvedAgentId === DEVELOPER_AGENT_ID && rationale.includes('defaulted to Developer')
+        ? 'Orchestrator routing failed — defaulted to Developer'
+        : `Orchestrator routed to ${resolvedAgentName}: ${rationale}`,
+      now,
+    ],
+  );
+
+  return { resolvedAgentId, resolvedAgentName, rationale };
+}
+
 /**
  * POST /api/tasks/[id]/dispatch
  * 
@@ -52,7 +188,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const { id } = await params;
 
     // Get task with agent info
-    const task = queryOne<Task & { assigned_agent_name?: string; workspace_id: string }>(
+    const task = queryOne<Task & { assigned_agent_name?: string; workspace_id: string; metadata?: string | null }>(
       `SELECT t.*, a.name as assigned_agent_name, a.is_master
        FROM tasks t
        LEFT JOIN agents a ON t.assigned_agent_id = a.id
@@ -79,6 +215,46 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     if (!agent) {
       return NextResponse.json({ error: 'Assigned agent not found' }, { status: 404 });
+    }
+
+    const taskMetadata = parseTaskMetadata(task.metadata);
+
+    // Orchestrator auto-routing mode: choose the best active agent, then continue normal dispatch.
+    if (taskMetadata.routing_mode === 'orchestrator' && agent.id === ORCHESTRATOR_AGENT_ID) {
+      const client = getOpenClawClient();
+      if (!client.isConnected()) {
+        try {
+          await client.connect();
+        } catch (err) {
+          console.error('Failed to connect to OpenClaw Gateway for routing:', err);
+        }
+      }
+
+      const now = new Date().toISOString();
+      await runOrchestratorRouting({ task, client, now });
+
+      const routedTask = queryOne<Task & { assigned_agent_name?: string; workspace_id: string; metadata?: string | null }>(
+        `SELECT t.*, a.name as assigned_agent_name, a.is_master
+         FROM tasks t
+         LEFT JOIN agents a ON t.assigned_agent_id = a.id
+         WHERE t.id = ?`,
+        [id],
+      );
+
+      if (!routedTask || !routedTask.assigned_agent_id) {
+        return NextResponse.json({ error: 'Failed to route task via Orchestrator' }, { status: 500 });
+      }
+
+      task.assigned_agent_id = routedTask.assigned_agent_id;
+      task.metadata = routedTask.metadata ?? null;
+      task.assigned_agent_name = routedTask.assigned_agent_name;
+
+      const routedAgent = queryOne<Agent>('SELECT * FROM agents WHERE id = ?', [routedTask.assigned_agent_id]);
+      if (!routedAgent) {
+        return NextResponse.json({ error: 'Routed agent not found' }, { status: 404 });
+      }
+
+      Object.assign(agent, routedAgent);
     }
 
     // Check if dispatching to the master agent while there are other orchestrators available

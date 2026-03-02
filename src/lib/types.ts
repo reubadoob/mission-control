@@ -64,6 +64,7 @@ export interface Task {
   workspace_id: string;
   business_id: string;
   due_date?: string;
+  metadata?: string | null;
   discord_thread_id?: string | null;
   review_approved_by?: string | null;
   review_approved_at?: string | null;

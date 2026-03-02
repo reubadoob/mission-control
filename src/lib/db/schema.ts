@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   planning_spec TEXT,
   planning_agents TEXT,
   planning_dispatch_error TEXT,
+  metadata TEXT DEFAULT NULL,
   discord_thread_id TEXT,
   review_approved_by TEXT DEFAULT NULL,
   review_approved_at TEXT DEFAULT NULL,
