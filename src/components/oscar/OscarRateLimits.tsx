@@ -2,123 +2,175 @@
 
 import { useEffect, useState } from 'react';
 
-interface ModelInfo {
+interface ProviderUsage {
+  provider: string;
+  raw: string | null;
+  error: string | null;
+}
+
+interface ModelCost {
   model: string;
-  requests_used?: number;
-  requests_limit?: number;
-  tokens_used?: number;
-  tokens_limit?: number;
-  reset_at?: string;
+  tasks: number;
+  tokens: number;
+  cost_usd: number;
 }
 
-interface UsageData {
-  models?: ModelInfo[];
-  available_models?: string[];
-  default_model?: string;
+interface CostData {
+  by_model: ModelCost[];
+  total_tokens: number;
+  total_cost_usd: number;
+  days: number;
 }
 
-function UsageBar({ used, limit, label }: { used: number; limit: number; label: string }) {
-  const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
-  const color = pct >= 90 ? 'bg-mc-accent-red' : pct >= 70 ? 'bg-mc-accent-yellow' : 'bg-mc-accent';
+const PROVIDER_LABELS: Record<string, string> = {
+  anthropic: 'Claude (Anthropic)',
+  google: 'Gemini (Google)',
+  openai: 'Codex (OpenAI)',
+};
 
-  return (
-    <div className="space-y-1">
-      <div className="flex justify-between text-xs">
-        <span className="text-mc-text-secondary">{label}</span>
-        <span>{used.toLocaleString()} / {limit.toLocaleString()} ({pct}%)</span>
-      </div>
-      <div className="h-1.5 bg-mc-bg rounded overflow-hidden border border-mc-border">
-        <div className={`h-full rounded ${color}`} style={{ width: `${pct}%` }} />
-      </div>
-    </div>
-  );
-}
+const PROVIDER_COLORS: Record<string, string> = {
+  anthropic: 'text-orange-400',
+  google: 'text-blue-400',
+  openai: 'text-green-400',
+};
 
 export function OscarRateLimits() {
-  const [data, setData] = useState<UsageData | null>(null);
+  const [usage, setUsage] = useState<ProviderUsage[]>([]);
+  const [costs, setCosts] = useState<CostData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<'live' | 'historical'>('historical');
 
   useEffect(() => {
     let mounted = true;
 
-    async function poll() {
+    async function fetchAll() {
       try {
-        const res = await fetch('/api/openclaw/models');
-        if (res.ok) {
-          const d = await res.json();
-          if (mounted) {
-            setData({
-              available_models: d.availableModels ?? [],
-              default_model: d.defaultModel,
-              models: [],
-            });
+        const [usageRes, costRes] = await Promise.allSettled([
+          fetch('/api/oscar/usage'),
+          fetch('/api/costs?days=30'),
+        ]);
+
+        if (mounted) {
+          if (usageRes.status === 'fulfilled' && usageRes.value.ok) {
+            const d = await usageRes.value.json();
+            setUsage(d.providers ?? []);
+          }
+          if (costRes.status === 'fulfilled' && costRes.value.ok) {
+            const d = await costRes.value.json();
+            setCosts(d);
           }
         }
       } catch {
-        // Ignore
+        // ignore
       } finally {
         if (mounted) setLoading(false);
       }
     }
 
-    poll();
-    const interval = setInterval(poll, 30000);
+    fetchAll();
+    const interval = setInterval(fetchAll, 60000);
     return () => { mounted = false; clearInterval(interval); };
   }, []);
 
-  if (loading) return <p className="text-xs text-mc-text-secondary">Loading model info…</p>;
+  if (loading) return <p className="text-xs text-mc-text-secondary">Loading usage data…</p>;
 
-  const modelsWithUsage = data?.models?.filter((m) => m.requests_limit || m.tokens_limit) ?? [];
+  const modelsByProvider: Record<string, ModelCost[]> = {};
+  for (const m of costs?.by_model ?? []) {
+    const provider = m.model.includes('/') ? m.model.split('/')[0] : 'other';
+    if (!modelsByProvider[provider]) modelsByProvider[provider] = [];
+    modelsByProvider[provider].push(m);
+  }
 
   return (
     <div className="space-y-4">
-      {/* Live usage bars if available */}
-      {modelsWithUsage.length > 0 && (
+      {/* Tab toggle */}
+      <div className="flex gap-2">
+        {(['historical', 'live'] as const).map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`text-xs px-3 py-1 rounded border transition-colors ${
+              activeTab === tab
+                ? 'border-mc-accent bg-mc-accent/10 text-mc-accent'
+                : 'border-mc-border text-mc-text-secondary hover:text-mc-text'
+            }`}
+          >
+            {tab === 'historical' ? '30-Day Spend' : 'Live CLI Usage'}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'historical' && (
         <div className="space-y-4">
-          {modelsWithUsage.map((m) => (
-            <div key={m.model} className="rounded border border-mc-border bg-mc-bg p-3 space-y-2">
-              <p className="text-xs font-mono text-mc-accent">{m.model}</p>
-              {m.requests_limit != null && m.requests_used != null && (
-                <UsageBar used={m.requests_used} limit={m.requests_limit} label="Requests" />
-              )}
-              {m.tokens_limit != null && m.tokens_used != null && (
-                <UsageBar used={m.tokens_used} limit={m.tokens_limit} label="Tokens" />
-              )}
-              {m.reset_at && (
-                <p className="text-xs text-mc-text-secondary">
-                  Resets {new Date(m.reset_at).toLocaleString()}
+          {/* Summary */}
+          {costs && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded border border-mc-border bg-mc-bg p-3">
+                <p className="text-xs text-mc-text-secondary mb-1">30-Day Cost</p>
+                <p className="text-lg font-mono text-mc-accent">
+                  ${costs.total_cost_usd.toFixed(4)}
+                </p>
+              </div>
+              <div className="rounded border border-mc-border bg-mc-bg p-3">
+                <p className="text-xs text-mc-text-secondary mb-1">Total Tokens</p>
+                <p className="text-lg font-mono text-mc-text">
+                  {costs.total_tokens.toLocaleString()}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* By provider + model */}
+          {Object.entries(modelsByProvider).map(([provider, models]) => (
+            <div key={provider}>
+              <h4 className={`text-xs uppercase mb-2 ${PROVIDER_COLORS[provider] ?? 'text-mc-text-secondary'}`}>
+                {PROVIDER_LABELS[provider] ?? provider}
+              </h4>
+              <div className="space-y-2">
+                {models.map((m) => {
+                  const modelLabel = m.model.includes('/') ? m.model.split('/').slice(1).join('/') : m.model;
+                  return (
+                    <div key={m.model} className="rounded border border-mc-border bg-mc-bg p-3">
+                      <div className="flex justify-between items-start mb-1">
+                        <p className="text-xs font-mono text-mc-text truncate max-w-[60%]">{modelLabel}</p>
+                        <p className="text-xs font-mono text-mc-accent">${m.cost_usd.toFixed(4)}</p>
+                      </div>
+                      <div className="flex gap-4 text-xs text-mc-text-secondary">
+                        <span>{m.tokens.toLocaleString()} tokens</span>
+                        <span>{m.tasks} task{m.tasks !== 1 ? 's' : ''}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+
+          {(costs?.by_model?.length ?? 0) === 0 && (
+            <p className="text-xs text-mc-text-secondary">No cost data recorded yet.</p>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'live' && (
+        <div className="space-y-4">
+          {usage.map((p) => (
+            <div key={p.provider} className="rounded border border-mc-border bg-mc-bg p-3">
+              <p className={`text-xs uppercase font-semibold mb-2 ${PROVIDER_COLORS[p.provider] ?? 'text-mc-text-secondary'}`}>
+                {PROVIDER_LABELS[p.provider] ?? p.provider}
+              </p>
+              {p.raw && p.raw.length > 0 ? (
+                <pre className="text-xs text-mc-text-secondary font-mono whitespace-pre-wrap break-all leading-relaxed">
+                  {p.raw}
+                </pre>
+              ) : (
+                <p className="text-xs text-mc-text-secondary italic">
+                  {p.error ? `CLI unavailable: ${p.error.slice(0, 80)}` : 'No output — CLI may not be in PATH or not authenticated.'}
                 </p>
               )}
             </div>
           ))}
         </div>
-      )}
-
-      {/* Configured models */}
-      <div>
-        <h4 className="text-xs uppercase text-mc-text-secondary mb-2">Configured models</h4>
-        {data?.default_model && (
-          <div className="mb-2 rounded border border-mc-accent/30 bg-mc-accent/10 px-3 py-1.5 text-xs">
-            <span className="text-mc-text-secondary">Default: </span>
-            <span className="font-mono text-mc-accent">{data.default_model}</span>
-          </div>
-        )}
-        <div className="space-y-1 max-h-64 overflow-y-auto">
-          {(data?.available_models ?? []).map((m) => (
-            <div key={m} className="text-xs font-mono text-mc-text-secondary px-2 py-1 rounded hover:bg-mc-bg-tertiary">
-              {m}
-            </div>
-          ))}
-          {(data?.available_models?.length ?? 0) === 0 && (
-            <p className="text-xs text-mc-text-secondary">No models configured.</p>
-          )}
-        </div>
-      </div>
-
-      {modelsWithUsage.length === 0 && (
-        <p className="text-xs text-mc-text-secondary">
-          Live rate-limit data not available from this gateway version.
-        </p>
       )}
     </div>
   );
