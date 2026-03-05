@@ -40,7 +40,16 @@ export async function GET() {
       })
     );
 
-    return NextResponse.json({ sessions: sessionsWithMessages });
+    // Only return sessions with at least one message in the last 24 hours
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    const activeSessions = sessionsWithMessages.filter((s) => {
+      if (!s.lastMessage) return false;
+      const ts = s.lastMessage.timestamp ?? (s as unknown as { updatedAt?: string }).updatedAt;
+      if (!ts) return false;
+      return new Date(ts).getTime() > cutoff;
+    });
+
+    return NextResponse.json({ sessions: activeSessions });
   } catch (error) {
     console.error('[Oscar] Sessions error:', error);
     return NextResponse.json({ sessions: [] });
