@@ -92,10 +92,10 @@ export function Header({ workspace, onToggleAgents, onToggleFeed }: HeaderProps)
             </div>
             <Link
               href={`/workspace/${workspace.slug}/oscar`}
-              className="flex items-center gap-1.5 px-3 py-1 text-xs rounded border border-mc-border text-mc-text-secondary hover:text-mc-accent hover:border-mc-accent transition-colors"
+              className="flex items-center gap-2 px-2 md:px-3 py-1 bg-mc-bg-tertiary rounded hover:bg-mc-bg transition-colors min-w-0"
             >
-              <span>🦞</span>
-              <span>Oscar</span>
+              <span className="text-lg flex-shrink-0">🦞</span>
+              <span className="font-medium truncate">Oscar</span>
             </Link>
           </div>
         ) : (
