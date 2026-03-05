@@ -31,6 +31,7 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isReviewSubmitting, setIsReviewSubmitting] = useState(false);
   const [showAgentModal, setShowAgentModal] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [usePlanningMode, setUsePlanningMode] = useState(false);
   // Auto-switch to planning tab if task is in planning status
   const [activeTab, setActiveTab] = useState<TabType>(task?.status === 'planning' ? 'planning' : 'overview');
@@ -187,8 +188,7 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
   };
 
   const handleDelete = async () => {
-    if (!task || !confirm(`Delete "${task.title}"?`)) return;
-
+    if (!task) return;
     try {
       const res = await fetch(`/api/tasks/${task.id}`, { method: 'DELETE' });
       if (res.ok) {
@@ -481,16 +481,35 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
         {/* Footer - only show on overview tab */}
         {activeTab === 'overview' && (
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 p-4 border-t border-mc-border flex-shrink-0">
-            <div className="flex gap-2">
-              {task && (
+            <div className="flex gap-2 items-center">
+              {task && !showDeleteConfirm && (
                 <button
                   type="button"
-                  onClick={handleDelete}
+                  onClick={() => setShowDeleteConfirm(true)}
                   className="flex items-center gap-2 px-3 py-2 text-mc-accent-red hover:bg-mc-accent-red/10 rounded text-sm"
                 >
                   <Trash2 className="w-4 h-4" />
                   Delete
                 </button>
+              )}
+              {task && showDeleteConfirm && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-mc-accent-red">Sure?</span>
+                  <button
+                    type="button"
+                    onClick={handleDelete}
+                    className="px-3 py-1.5 text-xs bg-mc-accent-red text-white rounded hover:opacity-90"
+                  >
+                    Yes, delete
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowDeleteConfirm(false)}
+                    className="px-3 py-1.5 text-xs border border-mc-border text-mc-text-secondary rounded hover:text-mc-text"
+                  >
+                    Cancel
+                  </button>
+                </div>
               )}
             </div>
             <div className="flex flex-wrap gap-2 justify-end">
