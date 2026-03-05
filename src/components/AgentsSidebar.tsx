@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, ChevronRight, ChevronLeft, Zap, ZapOff, Loader2, Search } from 'lucide-react';
+import { Plus, ChevronRight, ChevronLeft, Zap, ZapOff, Loader2, Search, X } from 'lucide-react';
 import { useMissionControl } from '@/lib/store';
 import type { Agent, AgentStatus, OpenClawSession } from '@/lib/types';
 import { AgentModal } from './AgentModal';
@@ -11,9 +11,11 @@ type FilterTab = 'all' | 'working' | 'standby';
 
 interface AgentsSidebarProps {
   workspaceId?: string;
+  isMobileOpen?: boolean;
+  onMobileClose?: () => void;
 }
 
-export function AgentsSidebar({ workspaceId }: AgentsSidebarProps) {
+export function AgentsSidebar({ workspaceId, isMobileOpen, onMobileClose }: AgentsSidebarProps) {
   const { agents, selectedAgent, setSelectedAgent, agentOpenClawSessions, setAgentOpenClawSession } = useMissionControl();
   const [filter, setFilter] = useState<FilterTab>('all');
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -116,17 +118,36 @@ export function AgentsSidebar({ workspaceId }: AgentsSidebarProps) {
   };
 
   return (
-    <aside
-      className={`bg-mc-bg-secondary border-r border-mc-border flex flex-col transition-all duration-300 ease-in-out ${
-        isMinimized ? 'w-12' : 'w-64'
-      }`}
-    >
+    <>
+      {/* Mobile backdrop */}
+      {isMobileOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 md:hidden"
+          onClick={onMobileClose}
+        />
+      )}
+      <aside
+        className={`bg-mc-bg-secondary border-r border-mc-border flex flex-col transition-all duration-300 ease-in-out
+          ${isMinimized ? 'w-12' : 'w-64'}
+          fixed inset-y-0 left-0 z-50 md:static md:z-auto
+          ${isMobileOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0
+        `}
+      >
       {/* Header */}
       <div className="p-3 border-b border-mc-border">
         <div className="flex items-center">
+          {/* Mobile close button */}
+          <button
+            onClick={onMobileClose}
+            className="md:hidden p-1 rounded hover:bg-mc-bg-tertiary text-mc-text-secondary hover:text-mc-text transition-colors mr-2"
+            aria-label="Close agents sidebar"
+          >
+            <X className="w-4 h-4" />
+          </button>
+          {/* Desktop minimize toggle */}
           <button
             onClick={toggleMinimize}
-            className="p-1 rounded hover:bg-mc-bg-tertiary text-mc-text-secondary hover:text-mc-text transition-colors"
+            className="hidden md:block p-1 rounded hover:bg-mc-bg-tertiary text-mc-text-secondary hover:text-mc-text transition-colors"
             aria-label={isMinimized ? 'Expand agents' : 'Minimize agents'}
           >
             {isMinimized ? (
@@ -345,5 +366,6 @@ export function AgentsSidebar({ workspaceId }: AgentsSidebarProps) {
         />
       )}
     </aside>
+    </>
   );
 }

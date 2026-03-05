@@ -111,14 +111,14 @@ export function MissionQueue({ workspaceId }: MissionQueueProps) {
         </button>
       </div>
 
-      {/* Kanban Columns */}
-      <div className="flex-1 flex gap-3 p-3 overflow-x-auto">
+      {/* Kanban Columns — horizontal scroll on desktop, snap-scroll on mobile */}
+      <div className="flex-1 flex gap-3 p-3 overflow-x-auto snap-x snap-mandatory md:snap-none">
         {COLUMNS.map((column) => {
           const columnTasks = getTasksByStatus(column.id);
           return (
             <div
               key={column.id}
-              className={`flex-1 min-w-[220px] max-w-[300px] flex flex-col bg-mc-bg rounded-lg border border-mc-border/50 border-t-2 ${column.color}`}
+              className={`flex-shrink-0 w-[85vw] md:w-auto md:flex-1 md:min-w-[220px] md:max-w-[300px] flex flex-col bg-mc-bg rounded-lg border border-mc-border/50 border-t-2 snap-center ${column.color}`}
               onDragOver={handleDragOver}
               onDrop={(e) => handleDrop(e, column.id)}
             >

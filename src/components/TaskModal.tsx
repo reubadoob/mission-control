@@ -246,8 +246,8 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
   ];
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-mc-bg-secondary border border-mc-border rounded-lg w-full max-w-2xl max-h-[90vh] flex flex-col">
+    <div className="fixed inset-0 bg-black/50 flex items-end md:items-center justify-center z-50 md:p-4">
+      <div className="bg-mc-bg-secondary border border-mc-border rounded-t-lg md:rounded-lg w-full max-w-2xl h-[95vh] md:h-auto md:max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-mc-border flex-shrink-0">
           <h2 className="text-lg font-semibold">
@@ -263,19 +263,19 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
 
         {/* Tabs - only show for existing tasks */}
         {task && (
-          <div className="flex border-b border-mc-border flex-shrink-0">
+          <div className="flex border-b border-mc-border flex-shrink-0 overflow-x-auto">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors ${
+                className={`flex items-center gap-2 px-3 md:px-4 py-3 text-sm font-medium transition-colors whitespace-nowrap ${
                   activeTab === tab.id
                     ? 'text-mc-accent border-b-2 border-mc-accent'
                     : 'text-mc-text-secondary hover:text-mc-text'
                 }`}
               >
                 {tab.icon}
-                {tab.label}
+                <span className="hidden sm:inline">{tab.label}</span>
               </button>
             ))}
           </div>
@@ -480,22 +480,20 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
 
         {/* Footer - only show on overview tab */}
         {activeTab === 'overview' && (
-          <div className="flex items-center justify-between p-4 border-t border-mc-border flex-shrink-0">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 p-4 border-t border-mc-border flex-shrink-0">
             <div className="flex gap-2">
               {task && (
-                <>
-                  <button
-                    type="button"
-                    onClick={handleDelete}
-                    className="flex items-center gap-2 px-3 py-2 text-mc-accent-red hover:bg-mc-accent-red/10 rounded text-sm"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                    Delete
-                  </button>
-                </>
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  className="flex items-center gap-2 px-3 py-2 text-mc-accent-red hover:bg-mc-accent-red/10 rounded text-sm"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Delete
+                </button>
               )}
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2 justify-end">
               <button
                 type="button"
                 onClick={onClose}
@@ -510,19 +508,19 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
                     type="button"
                     onClick={() => handleReviewAction('reject')}
                     disabled={isReviewSubmitting}
-                    className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded text-sm font-medium hover:bg-red-700 disabled:opacity-50"
+                    className="flex items-center gap-2 px-3 md:px-4 py-2 bg-red-600 text-white rounded text-sm font-medium hover:bg-red-700 disabled:opacity-50"
                   >
                     <XCircle className="w-4 h-4" />
-                    {isReviewSubmitting ? 'Submitting...' : 'Reject'}
+                    <span className="hidden sm:inline">{isReviewSubmitting ? 'Submitting...' : 'Reject'}</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => handleReviewAction('approve')}
                     disabled={isReviewSubmitting}
-                    className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded text-sm font-medium hover:bg-green-700 disabled:opacity-50"
+                    className="flex items-center gap-2 px-3 md:px-4 py-2 bg-green-600 text-white rounded text-sm font-medium hover:bg-green-700 disabled:opacity-50"
                   >
                     <Check className="w-4 h-4" />
-                    {isReviewSubmitting ? 'Submitting...' : 'Approve'}
+                    <span className="hidden sm:inline">{isReviewSubmitting ? 'Submitting...' : 'Approve'}</span>
                   </button>
                 </>
               )}

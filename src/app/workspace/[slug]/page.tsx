@@ -29,6 +29,8 @@ export default function WorkspacePage() {
 
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [mobileAgentsOpen, setMobileAgentsOpen] = useState(false);
+  const [mobileFeedOpen, setMobileFeedOpen] = useState(false);
 
   // Connect to SSE for real-time updates
   useSSE();
@@ -202,17 +204,28 @@ export default function WorkspacePage() {
 
   return (
     <div className="h-screen flex flex-col bg-mc-bg overflow-hidden">
-      <Header workspace={workspace} />
+      <Header
+        workspace={workspace}
+        onToggleAgents={() => setMobileAgentsOpen((v) => !v)}
+        onToggleFeed={() => setMobileFeedOpen((v) => !v)}
+      />
 
       <div className="flex-1 flex overflow-hidden">
-        {/* Agents Sidebar */}
-        <AgentsSidebar workspaceId={workspace.id} />
+        {/* Agents Sidebar — hidden on mobile, shown as drawer */}
+        <AgentsSidebar
+          workspaceId={workspace.id}
+          isMobileOpen={mobileAgentsOpen}
+          onMobileClose={() => setMobileAgentsOpen(false)}
+        />
 
         {/* Main Content Area */}
         <MissionQueue workspaceId={workspace.id} />
 
-        {/* Live Feed */}
-        <LiveFeed />
+        {/* Live Feed — hidden on mobile, shown as drawer */}
+        <LiveFeed
+          isMobileOpen={mobileFeedOpen}
+          onMobileClose={() => setMobileFeedOpen(false)}
+        />
       </div>
 
       {/* Debug Panel - only shows when debug mode enabled */}

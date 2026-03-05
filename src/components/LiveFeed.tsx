@@ -1,14 +1,19 @@
 'use client';
 
 import { useState } from 'react';
-import { ChevronRight, ChevronLeft, Clock } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Clock, X } from 'lucide-react';
 import { useMissionControl } from '@/lib/store';
 import type { Event } from '@/lib/types';
 import { formatDistanceToNow } from 'date-fns';
 
 type FeedFilter = 'all' | 'tasks' | 'agents';
 
-export function LiveFeed() {
+interface LiveFeedProps {
+  isMobileOpen?: boolean;
+  onMobileClose?: () => void;
+}
+
+export function LiveFeed({ isMobileOpen, onMobileClose }: LiveFeedProps = {}) {
   const { events } = useMissionControl();
   const [filter, setFilter] = useState<FeedFilter>('all');
   const [isMinimized, setIsMinimized] = useState(false);
@@ -67,17 +72,36 @@ export function LiveFeed() {
   };
 
   return (
-    <aside
-      className={`bg-mc-bg-secondary border-l border-mc-border flex flex-col transition-all duration-300 ease-in-out ${
-        isMinimized ? 'w-12' : 'w-80'
-      }`}
-    >
+    <>
+      {/* Mobile backdrop */}
+      {isMobileOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 md:hidden"
+          onClick={onMobileClose}
+        />
+      )}
+      <aside
+        className={`bg-mc-bg-secondary border-l border-mc-border flex flex-col transition-all duration-300 ease-in-out
+          ${isMinimized ? 'w-12' : 'w-80'}
+          fixed inset-y-0 right-0 z-50 md:static md:z-auto
+          ${isMobileOpen ? 'translate-x-0' : 'translate-x-full'} md:translate-x-0
+        `}
+      >
       {/* Header */}
       <div className="p-3 border-b border-mc-border">
         <div className="flex items-center">
+          {/* Mobile close button */}
+          <button
+            onClick={onMobileClose}
+            className="md:hidden p-1 rounded hover:bg-mc-bg-tertiary text-mc-text-secondary hover:text-mc-text transition-colors mr-2"
+            aria-label="Close live feed"
+          >
+            <X className="w-4 h-4" />
+          </button>
+          {/* Desktop minimize toggle */}
           <button
             onClick={toggleMinimize}
-            className="p-1 rounded hover:bg-mc-bg-tertiary text-mc-text-secondary hover:text-mc-text transition-colors"
+            className="hidden md:block p-1 rounded hover:bg-mc-bg-tertiary text-mc-text-secondary hover:text-mc-text transition-colors"
             aria-label={isMinimized ? 'Expand feed' : 'Minimize feed'}
           >
             {isMinimized ? (
@@ -126,6 +150,7 @@ export function LiveFeed() {
         </div>
       )}
     </aside>
+    </>
   );
 }
 
