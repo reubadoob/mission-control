@@ -71,7 +71,7 @@ export default function WorkspacePage() {
         
         // Fetch workspace-scoped data
         const [agentsRes, tasksRes, eventsRes] = await Promise.all([
-          fetch(`/api/agents?workspace_id=${workspaceId}`),
+          fetch(`/api/agents`),
           fetch(`/api/tasks?workspace_id=${workspaceId}`),
           fetch('/api/events'),
         ]);
