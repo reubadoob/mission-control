@@ -46,10 +46,10 @@ export async function GET(request: NextRequest) {
           counts.total += tc.count;
         });
         
-        // Get agent count
+        // Get agent count — agents are global, not workspace-scoped
         const agentCount = db.prepare(
-          'SELECT COUNT(*) as count FROM agents WHERE workspace_id = ?'
-        ).get(workspace.id) as { count: number };
+          'SELECT COUNT(*) as count FROM agents'
+        ).get() as { count: number };
         
         return {
           id: workspace.id,
